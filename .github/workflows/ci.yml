@@ -1,0 +1,121 @@
+# Named `CI` exactly: release.yml follows this workflow by name, so renaming it
+# silently stops every release.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to a branch makes the first run's answer worthless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Codegen imports @cubicecho/s3-artifacts-mcp-db, which refuses to load without one. Nothing
+      # here connects — postgres-js is lazy, and the tests build their own
+      # in-memory database.
+      DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # Matches the Dockerfile: the server runs its TypeScript sources
+          # directly, with Node stripping the types, so the runtime major is
+          # part of the contract, not just a build detail.
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      # Generated files aren't in the tree, so codegen runs before anything reads them.
+      - run: npm run codegen
+
+      # Formatting, lint and import order in one pass. `ci` differs from
+      # `npm run check:biome` only in never writing fixes.
+      - name: Lint
+        run: npx biome ci .
+
+      - name: Typecheck
+        run: npm run check:types
+
+      # The `storybook` project renders every story in a real Chromium, which is
+      # the point of it — the claims those stories make are layout and computed
+      # style. Nothing else in the suite needs a browser.
+      - name: Install the browser the stories run in
+        run: npx playwright install --with-deps chromium
+
+      # Three projects: server and db tests run Postgres in-process (PGlite),
+      # the component tests run in jsdom, and the stories run in Chromium — so
+      # there is no service container here and there doesn't need to be one.
+      - name: Test
+        run: npm test
+
+  # PGlite tests push the schema from the models, so they can't tell whether
+  # the committed migrations apply to a real Postgres, or match the models.
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - name: Migrations apply
+        run: npm run db:migrate
+      # drizzle-kit writes nothing when the models and migrations agree.
+      - name: Migrations match the models
+        run: |
+          npm run db:generate
+          if [ -n "$(git status --porcelain db/drizzle)" ]; then
+            git status --porcelain db/drizzle
+            echo "::error::The models changed without a migration. Run npm run db:generate and commit db/drizzle."
+            exit 1
+          fi
+
+  # The test for index.ts, preflight, waitForDatabase, migrate-at-boot and the
+  # Dockerfile: the real image in the real compose stack. The release workflow
+  # publishes this same Dockerfile, so one that no longer builds fails on the
+  # pull request that broke it, not on the push that was meant to ship it.
+  boot:
+    runs-on: ubuntu-latest
+    env:
+      # Preflight rejects short or default secrets in production. CI-only, never deployed.
+      BETTER_AUTH_SECRET: ci-only-0123456789abcdef0123456789abcdef
+      RUSTFS_PASSWORD: ci-only-rustfs-secret
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      # Loaded into the local daemon under the tag docker-compose.yml runs, so `up --no-build` uses it.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: ghcr.io/cubicecho/s3-artifacts-mcp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # --wait blocks until every service's healthcheck passes, the app's included.
+      - name: Start the stack
+        run: docker compose up -d --no-build --wait --wait-timeout 180
+      - name: /healthz answers
+        run: curl -fsS http://127.0.0.1:3005/healthz
+      - name: Logs
+        if: failure()
+        run: docker compose logs

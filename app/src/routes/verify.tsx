@@ -1,0 +1,72 @@
+import { useMutation } from '@apollo/client/react';
+import { useEffect, useRef } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { graphql } from '@/__generated__';
+import { CenteredCardLayout } from '@/components/centered-card-layout';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { setToken } from '@/lib/auth';
+import { OWNER_REFUSAL_TITLE, ownerRefusalDescription, ownerRefusalOf } from '@/lib/owner';
+import { ROUTES } from '@/lib/routes';
+
+const VerifyMagicLink = graphql(`
+  mutation VerifyMagicLink($token: String!) {
+    verifyMagicLink(token: $token) {
+      token
+    }
+  }
+`);
+
+/**
+ * Where a magic link lands. Trades the token in the URL for a session, once,
+ * and says so when the link is missing, spent or expired.
+ */
+export function VerifyPage() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const token = params.get('token');
+  const [verify, { error }] = useMutation(VerifyMagicLink);
+  // StrictMode mounts effects twice in development; verify once.
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (!token || started.current) {
+      return;
+    }
+    started.current = true;
+    verify({ variables: { token } })
+      .then(({ data }) => {
+        if (!data) {
+          return;
+        }
+        setToken(data.verifyMagicLink.token);
+        navigate(ROUTES.documents, { replace: true });
+      })
+      .catch(() => {});
+  }, [token, verify, navigate]);
+
+  const refusal = ownerRefusalOf(error);
+  if (refusal) {
+    return (
+      <CenteredCardLayout
+        level={1}
+        title={OWNER_REFUSAL_TITLE}
+        description={ownerRefusalDescription(refusal)}
+        footerActionsSlot={<Button content="Back to sign-in" linkSlot={<Link to={ROUTES.login} />} />}
+      />
+    );
+  }
+
+  if (!token || error) {
+    return (
+      <CenteredCardLayout
+        level={1}
+        title="This sign-in link is invalid or has expired"
+        description="Links work once, and only for a short while."
+        footerActionsSlot={<Button content="Request a new one" linkSlot={<Link to={ROUTES.login} />} />}
+      />
+    );
+  }
+
+  return <CenteredCardLayout level={1} title="Signing you in…" contentSlot={<Spinner label="Signing you in" />} />;
+}

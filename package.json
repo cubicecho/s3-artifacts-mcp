@@ -1,0 +1,62 @@
+{
+  "name": "s3-artifacts-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Upload agent artifacts to S3-compatible buckets over MCP and hand back share links.",
+  "type": "module",
+  "workspaces": [
+    "app",
+    "server",
+    "db"
+  ],
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,app \"npm run dev:server\" \"npm run dev:app\"",
+    "dev:app": "npm run dev -w @cubicecho/s3-artifacts-mcp-app",
+    "dev:server": "npm run dev -w @cubicecho/s3-artifacts-mcp-server",
+    "build": "npm run codegen && npm run build -w @cubicecho/s3-artifacts-mcp-app",
+    "build:app": "npm run build -w @cubicecho/s3-artifacts-mcp-app",
+    "storybook": "npm run storybook -w @cubicecho/s3-artifacts-mcp-app",
+    "build-storybook": "npm run build-storybook -w @cubicecho/s3-artifacts-mcp-app",
+    "check": "npm run codegen && npm run check:biome && npm run check:types",
+    "check:biome": "biome check --write .",
+    "check:types": "tsc --noEmit -p db/tsconfig.json && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p app/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "codegen": "npm run codegen:server && npm run codegen:app",
+    "codegen:app": "npm run codegen -w @cubicecho/s3-artifacts-mcp-app",
+    "codegen:server": "npm run codegen -w @cubicecho/s3-artifacts-mcp-server",
+    "db:generate": "npm run generate -w @cubicecho/s3-artifacts-mcp-db",
+    "db:migrate": "npm run migrate -w @cubicecho/s3-artifacts-mcp-db",
+    "db:push": "npm run push -w @cubicecho/s3-artifacts-mcp-db",
+    "db:studio": "npm run studio -w @cubicecho/s3-artifacts-mcp-db",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d",
+    "db:down": "docker compose -f docker-compose.dev.yml down"
+  },
+  "overrides": {
+    "graphql": "16.14.2",
+    "drizzle-orm": "1.0.0-rc.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@electric-sql/pglite": "^0.3.15",
+    "@graphql-codegen/cli": "^7.4.6",
+    "@graphql-codegen/client-preset": "^6.2.3",
+    "@graphql-codegen/schema-ast": "^6.1.1",
+    "@graphql-codegen/typescript": "^6.1.2",
+    "@graphql-codegen/typescript-resolvers": "^6.1.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.5",
+    "@vitest/browser-playwright": "^5.0.5",
+    "concurrently": "^10.0.6",
+    "drizzle-kit": "1.0.0-rc.5",
+    "jsdom": "^30.1.3",
+    "playwright": "^1.64.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

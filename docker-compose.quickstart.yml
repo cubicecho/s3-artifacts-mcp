@@ -1,0 +1,155 @@
+# s3-artifacts-mcp, for self-hosting. Paste this whole file into Portainer
+# (Stacks → Add stack → Web editor), TrueNAS SCALE (Apps → Discover → Custom
+# App → Install via YAML), Dockge, or run it with
+# `docker compose -f docker-compose.quickstart.yml up -d`.
+#
+# It pulls the published image, ghcr.io/cubicecho/s3-artifacts-mcp — nothing to
+# clone and nothing to build.
+#
+# Set these variables.
+# In Portainer they go in the stack's "Environment variables" box; with the
+# docker CLI, in a `.env` file beside this one. The stack refuses to start until
+# they are set, which is deliberate.
+#
+#   S3AM_HOST          The address you will actually open the app at — your
+#                      NAS's hostname or LAN IP, no scheme. e.g. truenas.local
+#   BETTER_AUTH_SECRET openssl rand -hex 32
+#   POSTGRES_PASSWORD  openssl rand -hex 24
+#   RUSTFS_PASSWORD    openssl rand -hex 24
+#   TZ                 optional, e.g. America/Chicago
+#
+# Optional, if something on this machine already owns those ports (9000 in
+# particular is popular):
+#
+#   S3AM_PORT=3005  RUSTFS_PORT=9000  RUSTFS_CONSOLE_PORT=9001
+#
+# After it starts.
+# Open http://S3AM_HOST:3005. The first account to sign in owns the instance,
+# and every other address is refused after that. The app sends no mail: the
+# sign-in link is written to the container log, and that is how you get it.
+#
+#   docker logs -f s3-artifacts-mcp        (or the Logs tab in Portainer)
+#
+# On a home network that is tedious. SECURE_LOCAL_NET=true skips the link
+# entirely — an address alone signs you in. Read the warning beside it below.
+#
+# Or sign in through an OpenID Connect provider such as heautou: make a setup
+# URL for this app there and paste it into the login page's "Set up sign-in"
+# tab before anyone has an account (or, later, Settings → Sign-in, as the
+# owner).
+#
+# Then add the bucket. The app reads no bucket from the environment; it is
+# added in Settings → Buckets. For the RustFS in this stack:
+#
+#   Provider         RustFS
+#   Endpoint         http://rustfs:9000
+#   Public endpoint  http://S3AM_HOST:9000   (RUSTFS_PORT, if you changed it)
+#   Bucket           artifacts
+#   Access key       s3am
+#   Secret key       your RUSTFS_PASSWORD
+#
+# The public endpoint is the one people get wrong. Share links are signed for
+# it and opened straight from the bucket, and the signature covers the host and
+# port — so if it says "localhost" while the link is opened from another
+# machine, the link fails with a signature error rather than a DNS one. Any
+# other S3, MinIO or RustFS bucket can be added the same way; if you will not
+# use this RustFS, remove the `rustfs` and `rustfs-init` services.
+#
+# Keep this on a network you trust, or put a reverse proxy in front of it. Read
+# the "Before you expose it" section of the README before giving it a domain.
+
+name: s3-artifacts-mcp
+
+services:
+  s3-artifacts-mcp:
+    image: ghcr.io/cubicecho/s3-artifacts-mcp:latest
+    container_name: s3-artifacts-mcp
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    environment:
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET — openssl rand -hex 32}
+      DATABASE_URL: postgres://s3am:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/s3am
+      # The address sign-in links are built from.
+      APP_URL: http://${S3AM_HOST:?set S3AM_HOST to this machine's hostname or LAN IP}:${S3AM_PORT:-3005}
+      # On a LAN you control, set SECURE_LOCAL_NET=true and entering an address
+      # signs you in — no link to dig out of the log. It makes that address the
+      # entire credential, so it is wrong the moment this port is reachable from
+      # anywhere you do not control.
+      SECURE_LOCAL_NET: ${SECURE_LOCAL_NET:-false}
+      # Behind a reverse proxy, the number of proxies in front (usually 1).
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      TZ: ${TZ:-UTC}
+      NODE_ENV: production
+    ports:
+      - "${S3AM_PORT:-3005}:3005"
+    # No healthcheck block: the image ships its own, on /healthz.
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: s3-artifacts-mcp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: s3am
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: s3am
+      TZ: ${TZ:-UTC}
+    # No published port: only the container beside it needs the database.
+    volumes:
+      - s3am_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U s3am -d s3am"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: s3-artifacts-mcp-rustfs
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: s3am
+      RUSTFS_SECRET_KEY: ${RUSTFS_PASSWORD:?set RUSTFS_PASSWORD — openssl rand -hex 24}
+      RUSTFS_CONSOLE_ENABLE: "true"
+      # Empty means the container log, where `docker logs` and Portainer look.
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+      TZ: ${TZ:-UTC}
+    ports:
+      # This one has to be reachable from wherever a share link is opened:
+      # links go straight here, not through the app.
+      - "${RUSTFS_PORT:-9000}:9000"
+      # RustFS's own admin console — handy for seeing your files, and it takes
+      # the root password, so drop this line if you do not want it exposed.
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - s3am_rustfs:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Creates the `artifacts` bucket and exits. Runs again on every `up`, and does
+  # nothing when it already exists.
+  rustfs-init:
+    image: rustfs/rc:latest
+    container_name: s3-artifacts-mcp-rustfs-init
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      RUSTFS_PASSWORD: ${RUSTFS_PASSWORD:?set RUSTFS_PASSWORD — openssl rand -hex 24}
+    entrypoint: >
+      sh -c "rc alias set local http://rustfs:9000 s3am \"$$RUSTFS_PASSWORD\" &&
+             rc bucket create --ignore-existing local/artifacts"
+    restart: "no"
+
+# Your documents live in s3am_rustfs (or whichever buckets you add) and their
+# metadata, tags and share links in s3am_pgdata. Both survive
+# `docker compose down` and stack restarts — back up both together.
+volumes:
+  s3am_pgdata:
+  s3am_rustfs:

@@ -1,0 +1,12 @@
+node_modules
+dist
+storybook-static
+.env
+.env.local
+pgdata/
+coverage/
+__generated__
+**/tsconfig.tsbuildinfo
+.DS_Store
+.env.stack
+.vitest/

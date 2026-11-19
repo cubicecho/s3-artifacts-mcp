@@ -1,0 +1,15 @@
+@import "tailwindcss";
+/* cubeui's palette, light and dark, with its reset and tw-animate-css. The
+   colours are the registry's, so this app has none of its own to keep in step. */
+@import "../cubeui-tokens.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@layer base {
+  * {
+    @apply border-foreground/10 outline-active/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

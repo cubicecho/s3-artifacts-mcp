@@ -1,0 +1,117 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { expect, within } from 'storybook/test';
+import { PageLayout } from '@/components/page-layout';
+import { ROUTES } from '@/lib/routes';
+import { AppLayout } from './app-layout';
+
+/**
+ * The shell, at the two places it has and the two widths it has.
+ *
+ * Everything this component decides is decided by the URL and the viewport, neither of which a
+ * prop can stand in for — which is why these stories set `parameters.router.initialEntries` and
+ * a viewport instead of passing args. The claims are: exactly one nav row is marked current,
+ * the sidebar is gone below `md` and its controls have moved into a header, and the page's own
+ * body scrolls while the chrome around it does not.
+ *
+ * That last one is the reason these run in a real browser. `overflow-y-auto` on an element whose
+ * height comes from a chain of `min-h-0` flex parents is not something jsdom has an opinion
+ * about — it reports every height as zero — so the bug this is here to catch is invisible to it.
+ */
+
+function Page({ title }: { title: string }) {
+  return (
+    <PageLayout
+      title={title}
+      description="Placeholder body, long enough to need scrolling."
+      contentSlot={
+        <div className="flex flex-col gap-4 py-4">
+          {Array.from({ length: 30 }, (_, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: filler, with no identity
+            <p key={index} className="text-foreground/60 text-sm">
+              Row {index + 1}
+            </p>
+          ))}
+        </div>
+      }
+    />
+  );
+}
+
+const meta = {
+  title: 'Layouts/AppLayout',
+  component: AppLayout,
+  parameters: { layout: 'fullscreen' },
+} satisfies Meta<typeof AppLayout>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+/** Only one row is current, ever. `Documents` carries `end`, so a page below it does not lift it. */
+export const DocumentsRoute: Story = {
+  args: { contentSlot: <Page title="Documents" /> },
+  parameters: { router: { initialEntries: [ROUTES.documents] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const current = canvas.getAllByRole('link', { current: 'page' });
+    await expect(current).toHaveLength(1);
+    await expect(current[0]).toHaveAccessibleName('Documents');
+  },
+};
+
+export const SettingsRoute: Story = {
+  args: { contentSlot: <Page title="Settings" /> },
+  parameters: { router: { initialEntries: [ROUTES.settings] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const current = canvas.getAllByRole('link', { current: 'page' });
+    await expect(current).toHaveLength(1);
+    await expect(current[0]).toHaveAccessibleName('Settings');
+  },
+};
+
+/** Settings sits at the foot of the sidebar with sign-out, as in the other cubeui apps, not among the places. */
+export const SettingsAtTheFoot: Story = {
+  args: { contentSlot: <Page title="Documents" /> },
+  parameters: { router: { initialEntries: [ROUTES.documents] } },
+  play: async ({ canvasElement }) => {
+    const sidebar = within(within(canvasElement).getByRole('complementary'));
+    const places = within(sidebar.getByRole('navigation', { name: 'Main' }));
+    await expect(places.getByRole('link', { name: 'Documents' })).toBeVisible();
+    await expect(places.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+
+    const settings = sidebar.getByRole('link', { name: 'Settings' });
+    const signOut = sidebar.getByRole('button', { name: 'Sign out' });
+    await expect(settings).toBeVisible();
+    // Below the places, beside sign-out.
+    await expect(
+      places.getByRole('link', { name: 'Documents' }).compareDocumentPosition(settings) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await expect(settings.compareDocumentPosition(signOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  },
+};
+
+/**
+ * Phone width. The sidebar is display:none and the same two destinations are icons in a header,
+ * with the theme control and sign-out beside them — so nothing reachable on a desktop becomes
+ * unreachable here.
+ */
+export const Narrow: Story = {
+  args: { contentSlot: <Page title="Documents" /> },
+  globals: { viewport: { value: 'mobile1' } },
+  parameters: { router: { initialEntries: [ROUTES.documents] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Both navs are in the DOM; only one is laid out. `getAllByRole` would find four links and
+    // pass whatever the CSS did, so the assertion has to be about the box, not the markup.
+    await expect(canvas.getByRole('complementary', { hidden: true })).not.toBeVisible();
+
+    await expect(canvas.getByRole('banner')).toBeVisible();
+    // One of each, not two: the sidebar's copies are in the DOM and must not be reachable.
+    await expect(canvas.getByRole('button', { name: 'Sign out' })).toBeVisible();
+    // The bar carries no theme picker (it does not fit at 320px), and the sidebar's is not laid out.
+    await expect(canvas.queryByRole('radiogroup', { name: 'Theme' })).not.toBeInTheDocument();
+    await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
+  },
+};

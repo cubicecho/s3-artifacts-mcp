@@ -1,0 +1,271 @@
+import * as dbSchema from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { eq } from 'drizzle-orm';
+import { assertObjectType, extendSchema, type GraphQLSchema, parse } from 'graphql';
+import { z } from 'zod';
+import { magicLinkExposed, magicLinkRequired } from '../core/config.ts';
+import type { Context } from '../core/context.ts';
+import { badInput, forbidden, requireAuth, unauthenticated } from '../core/errors.ts';
+import { SSO_START_PATH } from '../http/sso.ts';
+import { effectiveOidc } from '../sso/settings.ts';
+import { requestMagicLink } from './better-auth.ts';
+import { hasOwner, OWNER_EXISTS_CODE, OWNER_EXISTS_MESSAGE } from './owner.ts';
+
+const AUTH_SDL = parse(`
+  "How this instance signs people in, so the client can render the right form."
+  type AuthConfig {
+    "Whether an address alone signs in, with no link to follow."
+    secureLocalNet: Boolean!
+    "Whether signing in means following a link."
+    magicLink: Boolean!
+    "The paired OIDC provider to sign in with, or null when there is none."
+    sso: SsoProvider
+    """
+    Whether someone owns this instance yet. False on a fresh instance, where the first account to
+    sign in becomes its owner; after that every other address is refused (FORBIDDEN).
+    """
+    hasOwner: Boolean!
+  }
+
+  "An OpenID Connect provider the login page offers."
+  type SsoProvider {
+    "What the button calls it: the name in the setup URL."
+    name: String!
+    "Where the button sends the browser, on this origin."
+    signInPath: String!
+  }
+
+  type AuthSession {
+    "Sent back as \`Authorization: Bearer <token>\`."
+    token: String!
+    user: User!
+  }
+
+  """
+  The outcome of a sign-in request. Where no link is required there is none to
+  follow, so a live session comes back at once and \`sent\` is false. Otherwise
+  \`magicLink\` is filled in only where exposing it is enabled.
+  """
+  type SignInResult {
+    sent: Boolean!
+    session: AuthSession
+    magicLink: String
+  }
+
+  extend type Query {
+    "The signed-in user. UNAUTHENTICATED when the session is missing or over."
+    me: User!
+    authConfig: AuthConfig!
+  }
+
+  extend type Mutation {
+    """
+    Sends a sign-in link, or where none is required signs straight in and returns a session.
+    FORBIDDEN when the instance has an owner and this is not their address.
+    """
+    requestSignIn(email: String!): SignInResult!
+    verifyMagicLink(token: String!): AuthSession!
+    "The last leg of an OIDC sign-in: the one-time token the callback put on /auth/sso, for a session."
+    verifyOneTimeToken(token: String!): AuthSession!
+    "Ends the caller's session. False when there was none."
+    signOut: Boolean!
+  }
+`);
+
+/** The auth mutations that are rate limited. Each has its own budget. */
+export const AuthFlow = {
+  RequestSignIn: 'requestSignIn',
+  VerifyMagicLink: 'verifyMagicLink',
+  VerifyOneTimeToken: 'verifyOneTimeToken',
+} as const;
+/** One of the flows in `AuthFlow`. */
+export type AuthFlow = (typeof AuthFlow)[keyof typeof AuthFlow];
+
+/** Where a user made without a link came from, as better-auth's `validateUserInfo` gate sees it. */
+const LOCAL_NET_SOURCE = { method: 'secure-local-net' };
+
+/**
+ * Counts one attempt at an auth flow, by client address and by account.
+ *
+ * Two keys, because the two attacks differ: the address key stops one client
+ * spraying many accounts, and the email key stops many clients burying one
+ * address in sign-in links.
+ *
+ * @throws A TOO_MANY_REQUESTS error when the address or the account is over its budget.
+ */
+function throttle(ctx: Context, flow: AuthFlow, email?: string): void {
+  const keys = [`${flow}:ip:${ctx.ip}`];
+  if (email !== undefined) {
+    keys.push(`${flow}:email:${email.trim().toLowerCase()}`);
+  }
+  ctx.limiter.hit(...keys);
+}
+
+function normalizeEmail(email: string): string {
+  const parsed = z.email().safeParse(email.trim().toLowerCase());
+  if (parsed.success === false) {
+    throw badInput('Enter a valid email address');
+  }
+  return parsed.data;
+}
+
+async function loadUser(ctx: Context, userId: string): Promise<dbSchema.User> {
+  const [user] = await ctx.db.select().from(dbSchema.users).where(eq(dbSchema.users.id, userId));
+  // A live session for a row that is gone — a restored database, a deleted
+  // account. Same answer as an expired one: this session is over.
+  if (!user) {
+    throw unauthenticated();
+  }
+  return user;
+}
+
+/**
+ * Whether better-auth refused because the instance has an owner: thrown by the owner gate from
+ * `createUser`, or carried on the redirect a link verification ends with.
+ *
+ * @param error - What a better-auth call threw.
+ * @returns True for the owner gate's refusal.
+ */
+function isOwnerRefusal(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const { body, headers } = error as { body?: { code?: unknown }; headers?: { get?: (name: string) => string | null } };
+  if (body?.code === OWNER_EXISTS_CODE) {
+    return true;
+  }
+  const location = headers?.get?.('location') ?? null;
+  return (
+    location !== null && URL.canParse(location) && new URL(location).searchParams.get('error') === OWNER_EXISTS_CODE
+  );
+}
+
+/**
+ * Refuses an address that cannot sign in because the instance belongs to someone else.
+ *
+ * @param ctx - The request.
+ * @param email - The normalized address.
+ * @throws FORBIDDEN when there is an owner and no account has this address.
+ *
+ * @remarks
+ * Checked before a link is sent, so nobody waits for a link that cannot be spent. The owner gate in
+ * better-auth (auth/owner.ts) is what actually refuses the account; this only says so sooner.
+ */
+async function refuseNewAddressOnOwnedInstance(ctx: Context, email: string): Promise<void> {
+  const internal = (await ctx.auth.$context).internalAdapter;
+  const existing = await internal.findUserByEmail(email);
+  const isNewAddress = existing === null;
+  if (isNewAddress && (await hasOwner(ctx.db))) {
+    throw forbidden(OWNER_EXISTS_MESSAGE);
+  }
+}
+
+/**
+ * Opens a session for an address with no link to follow, creating the account on first use. Only
+ * the first address gets one: after that the owner gate refuses every other.
+ */
+async function signInDirectly(ctx: Context, email: string): Promise<{ token: string; userId: string }> {
+  const internal = (await ctx.auth.$context).internalAdapter;
+  const existing = await internal.findUserByEmail(email);
+  const [localPart = email] = email.split('@');
+  // Unverified, so a later sign-in by link verifies this same row.
+  const user =
+    existing?.user ?? (await internal.createUser({ email, name: localPart, emailVerified: false }, LOCAL_NET_SOURCE));
+  const session = await internal.createSession(user.id);
+  return { token: session.token, userId: user.id };
+}
+
+/**
+ * Adds the sign-in fields to the schema: `me`, `authConfig`, `requestSignIn`, `verifyMagicLink`,
+ * `verifyOneTimeToken` and `signOut`.
+ *
+ * @param schema - The generated schema, which must already have a Mutation type.
+ * @returns The extended schema.
+ *
+ * @remarks
+ * These fields are the only way to reach better-auth apart from the two OIDC redirects in
+ * http/sso.ts. The sign-in mutations are throttled first, because better-auth's own limiter never runs
+ * for `auth.api` calls.
+ */
+export function applyAuthExtension(schema: GraphQLSchema): GraphQLSchema {
+  const extendedSchema = extendSchema(schema, AUTH_SDL);
+  const fields = assertObjectType(extendedSchema.getType('Mutation')).getFields();
+  const queries = assertObjectType(extendedSchema.getType('Query')).getFields();
+
+  queries.me.resolve = (_parent: unknown, _args: unknown, context: Context) => loadUser(context, requireAuth(context));
+
+  queries.authConfig.resolve = async (_parent: unknown, _args: unknown, context: Context) => {
+    const { config: oidc } = await effectiveOidc(context.db);
+    return {
+      secureLocalNet: magicLinkRequired() === false,
+      magicLink: magicLinkRequired(),
+      sso: oidc === null ? null : { name: oidc.name, signInPath: SSO_START_PATH },
+      hasOwner: await hasOwner(context.db),
+    };
+  };
+
+  fields.requestSignIn.resolve = async (_parent: unknown, args: { email: string }, context: Context) => {
+    throttle(context, AuthFlow.RequestSignIn, args.email);
+    const email = normalizeEmail(args.email);
+    await refuseNewAddressOnOwnedInstance(context, email);
+
+    // No-link mode: the address alone is the credential. Only ever appropriate
+    // on a private instance — see config.ts and the README's "Before you expose
+    // it".
+    if (!magicLinkRequired()) {
+      const { token, userId } = await signInDirectly(context, email).catch((error: unknown) => {
+        throw isOwnerRefusal(error) ? forbidden(OWNER_EXISTS_MESSAGE) : error;
+      });
+      console.log(`[auth] Magic links are off; signed ${email} in directly.`);
+      return { sent: false, session: { token, user: await loadUser(context, userId) }, magicLink: null };
+    }
+
+    const link = await requestMagicLink(context.auth, email, context.origin);
+    return { sent: true, session: null, magicLink: magicLinkExposed() ? (link?.url ?? null) : null };
+  };
+
+  fields.verifyMagicLink.resolve = async (_parent: unknown, args: { token: string }, context: Context) => {
+    throttle(context, AuthFlow.VerifyMagicLink);
+    // A used, expired or made-up token is answered with a redirect to an error
+    // URL, which arrives here as a thrown response. Every failure but one means
+    // the same thing, and none of them is an expired session. The one is the
+    // owner gate: a link for a new address, requested before someone else
+    // became the owner.
+    const result = await context.auth.api
+      .magicLinkVerify({ query: { token: args.token }, headers: new Headers() })
+      .catch((error: unknown) => {
+        if (isOwnerRefusal(error)) {
+          throw forbidden(OWNER_EXISTS_MESSAGE);
+        }
+        return null;
+      });
+    if (result === null) {
+      throw badInput('Invalid or expired magic link');
+    }
+    return { token: result.token, user: await loadUser(context, result.user.id) };
+  };
+
+  fields.verifyOneTimeToken.resolve = async (_parent: unknown, args: { token: string }, context: Context) => {
+    throttle(context, AuthFlow.VerifyOneTimeToken);
+    // Spent, expired and made-up tokens all throw, and all mean the same thing:
+    // this sign-in has to be started again. None of them is an expired session.
+    const result = await context.auth.api
+      .verifyOneTimeToken({ body: { token: args.token }, headers: new Headers() })
+      .catch(() => null);
+    if (result === null) {
+      throw badInput('Invalid or expired sign-in');
+    }
+    return { token: result.session.token, user: await loadUser(context, result.user.id) };
+  };
+
+  fields.signOut.resolve = async (_parent: unknown, _args: unknown, context: Context) => {
+    // better-auth reports success even with no session, so look first.
+    const session = await context.auth.api.getSession({ headers: context.headers });
+    if (session === null) {
+      return false;
+    }
+    await context.auth.api.signOut({ headers: context.headers });
+    return true;
+  };
+
+  return extendedSchema;
+}

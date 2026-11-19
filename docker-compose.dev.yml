@@ -1,0 +1,80 @@
+# Postgres and RustFS, for running the app from source. `npm run db:up`.
+#
+# Its own project name, so it never collides with the containers
+# docker-compose.yml creates — both files define `postgres` and `rustfs`.
+#
+# Ports sit beside Engrafo's dev stack (5436, 9000, 9001), so both can run on
+# one machine. Override them with POSTGRES_PORT, RUSTFS_PORT and
+# RUSTFS_CONSOLE_PORT.
+#
+# The app reads no bucket from the environment. Add this one in Settings →
+# Buckets once you are signed in:
+#
+#   Provider  RustFS
+#   Endpoint  http://localhost:9010
+#   Bucket    artifacts
+#   Access key s3am    Secret key s3am-dev-secret
+name: s3-artifacts-mcp-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: s3am
+      POSTGRES_PASSWORD: s3am
+      POSTGRES_DB: s3am
+    ports:
+      # Loopback by default: an unencrypted Postgres with a throwaway password
+      # has no business on a network. Override DEV_BIND to 0.0.0.0 when the
+      # Docker daemon is not this machine (`docker context ls` shows a remote
+      # endpoint) — the loopback it binds is the daemon host's, not yours.
+      - "${DEV_BIND:-127.0.0.1}:${POSTGRES_PORT:-5437}:5432"
+    volumes:
+      - s3am_dev_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U s3am -d s3am"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # No CORS setting: the app streams its own uploads and downloads through the
+  # server, a share link is a top-level navigation, and an agent's presigned
+  # PUT comes from curl, not a browser. Nothing cross-origin reaches RustFS.
+  rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: s3am
+      RUSTFS_SECRET_KEY: s3am-dev-secret
+      RUSTFS_CONSOLE_ENABLE: "true"
+      # Empty means stdout. The image's default is a file inside the container,
+      # where `docker logs` shows nothing and nothing rotates it.
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+    ports:
+      # Share links are signed for this address, so it has to be reachable from
+      # wherever a link is opened. Same DEV_BIND rule as Postgres.
+      - "${DEV_BIND:-127.0.0.1}:${RUSTFS_PORT:-9010}:9000"
+      - "${DEV_BIND:-127.0.0.1}:${RUSTFS_CONSOLE_PORT:-9011}:9001"
+    volumes:
+      - s3am_dev_rustfs:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Creates the `artifacts` bucket, then exits. Does nothing when it exists.
+  rustfs-init:
+    image: rustfs/rc:latest
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "rc alias set local http://rustfs:9000 s3am s3am-dev-secret &&
+             rc bucket create --ignore-existing local/artifacts"
+    restart: "no"
+
+volumes:
+  s3am_dev_pgdata:
+  s3am_dev_rustfs:

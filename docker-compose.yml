@@ -1,0 +1,105 @@
+# The deployment, built from this checkout: the app, its database and a RustFS
+# to hold the documents. `docker compose up -d --build`.
+#
+# Two secrets are required; put them in a `.env` beside this file:
+#
+#   BETTER_AUTH_SECRET  openssl rand -hex 32
+#   RUSTFS_PASSWORD     openssl rand -hex 24
+#
+# Optional: POSTGRES_PASSWORD, APP_URL, PORT (3005), RUSTFS_PORT (9000),
+# RUSTFS_CONSOLE_PORT (9001), SECURE_LOCAL_NET, TRUST_PROXY.
+#
+# The app reads no bucket from the environment. Once you are signed in, add the
+# RustFS bucket in Settings → Buckets:
+#
+#   Provider         RustFS
+#   Endpoint         http://rustfs:9000         (how the server reaches it)
+#   Public endpoint  http://<this host>:9000    (what share links are signed for)
+#   Bucket           artifacts
+#   Access key       s3am
+#   Secret key       the RUSTFS_PASSWORD above
+#
+# Any other S3, MinIO or RustFS bucket can be added the same way. If you never
+# use this RustFS, remove the `rustfs` and `rustfs-init` services.
+name: s3-artifacts-mcp
+
+services:
+  s3-artifacts-mcp:
+    image: ghcr.io/cubicecho/s3-artifacts-mcp:latest
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    environment:
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required — generate one with `openssl rand -hex 32`}
+      DATABASE_URL: postgres://s3am:${POSTGRES_PASSWORD:-s3am}@postgres:5432/s3am
+      # Empty: links and the OIDC redirect URI use the address the browser came in on.
+      APP_URL: ${APP_URL:-}
+      SECURE_LOCAL_NET: ${SECURE_LOCAL_NET:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      NODE_ENV: production
+      PORT: 3005
+    ports:
+      - "${PORT:-3005}:3005"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: s3am
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-s3am}
+      POSTGRES_DB: s3am
+    # No `ports`: the database is for the app beside it on the compose network.
+    volumes:
+      - s3am_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U s3am -d s3am"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # No CORS setting: the app streams its own traffic through the server, and a
+  # share link is a top-level navigation, so no browser makes a cross-origin
+  # request to RustFS.
+  rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: s3am
+      RUSTFS_SECRET_KEY: ${RUSTFS_PASSWORD:?RUSTFS_PASSWORD is required — generate one with `openssl rand -hex 24`}
+      RUSTFS_CONSOLE_ENABLE: "true"
+      # Empty means stdout. The image's default is a file inside the container,
+      # where `docker logs` shows nothing and nothing rotates it.
+      RUSTFS_OBS_LOG_DIRECTORY: ""
+    # Published because share links and an agent's presigned uploads go straight
+    # here. The console stays on loopback.
+    ports:
+      - "${RUSTFS_PORT:-9000}:9000"
+      - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - s3am_rustfs:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Creates the `artifacts` bucket, then exits. Does nothing when it exists.
+  rustfs-init:
+    image: rustfs/rc:latest
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      RUSTFS_PASSWORD: ${RUSTFS_PASSWORD:?RUSTFS_PASSWORD is required — generate one with `openssl rand -hex 24`}
+    entrypoint: >
+      sh -c "rc alias set local http://rustfs:9000 s3am \"$$RUSTFS_PASSWORD\" &&
+             rc bucket create --ignore-existing local/artifacts"
+    restart: "no"
+
+volumes:
+  s3am_pgdata:
+  s3am_rustfs:
