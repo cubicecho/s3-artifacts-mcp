@@ -21,6 +21,7 @@ import { createS3Storage } from '../../storage/s3.ts';
 import { Disposition } from '../../storage/storage.ts';
 import {
   closeTestDb,
+  createClient,
   createSessionToken,
   createTestAuth,
   createTestDb,
@@ -171,6 +172,24 @@ describe.skipIf(isConfigured === false)(
       }
     });
 
+    it('copies an object past the single-copy limit in parts, its bytes and type kept', async () => {
+      const key = `.s3am-it-copy-${Date.now()}`;
+      const copy = `${key}-copy`;
+      // Five MiB is S3's smallest part, so the 9 MiB body goes as two.
+      const inParts = createS3Storage(connection, S3AM_IT_SECRET_KEY ?? '', {
+        maxSingleCopyBytes: 5_242_880,
+        copyPartSizeBytes: 5_242_880,
+      });
+      await inParts.uploadStream(key, streamed(bytes), { contentType: 'application/x-it', size: bytes.length });
+      try {
+        await inParts.copy(key, copy);
+        expect(await inParts.head(copy)).toEqual({ size: bytes.length, contentType: 'application/x-it' });
+        expect((await buffer(await inParts.getStream(copy))).equals(bytes)).toBe(true);
+      } finally {
+        await inParts.delete([key, copy]);
+      }
+    });
+
     it('aborts the multipart upload when the body fails, leaving no object and no parts', async () => {
       const key = `.s3am-it-abort-${Date.now()}`;
       const failing = streamed(bytes, UPLOAD_DEFAULTS.partSizeBytes + 65_536);
@@ -265,6 +284,79 @@ describe.skipIf(isConfigured === false)(
         } finally {
           await storage.delete([objectKey]);
         }
+      });
+
+      describe('share links', () => {
+        const SHARE = `
+          mutation ($documentId: UUID!, $permission: ShareLinkPermission) {
+            createShareLink(documentId: $documentId, permission: $permission, expiresInHours: 1) { id url state }
+          }
+        `;
+        const body = 'shared straight from the bucket';
+        let documentId: string;
+        let objectKey: string;
+
+        /** The owner's GraphQL client, over the real bucket. */
+        const owners = () => createClient(db, owner, { secrets: scanContext.secrets, storage: scanContext.storage });
+
+        beforeAll(async () => {
+          documentId = crypto.randomUUID();
+          objectKey = objectKeyFor(documentId, 'Shared notes.txt');
+          await storage.upload(objectKey, body, { contentType: 'binary/octet-stream', size: Buffer.byteLength(body) });
+          await db.insert(documents).values({
+            id: documentId,
+            userId: owner,
+            bucketId,
+            title: 'Shared notes',
+            filename: 'Shared notes.txt',
+            objectKey,
+            contentType: 'text/plain',
+            size: Buffer.byteLength(body),
+            status: DocumentStatus.Ready,
+          });
+        });
+
+        afterAll(async () => {
+          const [row] = await db.select().from(documents).where(eq(documents.id, documentId));
+          await storage.delete([objectKey, ...(row === undefined ? [] : [row.objectKey])]);
+        });
+
+        it('opens with no credentials, as the document’s type and the disposition asked for', async () => {
+          const { createShareLink: download } = await owners().expectOk(SHARE, { documentId, permission: 'download' });
+          const saved = await fetch(download.url);
+          expect(saved.status).toBe(HttpStatus.Ok);
+          expect(await saved.text()).toBe(body);
+          expect(saved.headers.get('content-type')).toBe('text/plain');
+          expect(saved.headers.get('content-disposition')).toBe(
+            `attachment; filename="Shared notes.txt"; filename*=UTF-8''Shared%20notes.txt`,
+          );
+
+          const { createShareLink: view } = await owners().expectOk(SHARE, { documentId, permission: 'view' });
+          const shown = await fetch(view.url);
+          expect(await shown.text()).toBe(body);
+          expect(shown.headers.get('content-disposition')).toMatch(/^inline; filename="Shared notes.txt"/);
+        });
+
+        it('answers 404 for every old link once the document is re-keyed, and serves the new key', async () => {
+          const { createShareLink: before } = await owners().expectOk(SHARE, { documentId });
+          expect((await fetch(before.url)).status).toBe(HttpStatus.Ok);
+
+          const { rekeyDocument } = await owners().expectOk(
+            'mutation ($id: UUID!) { rekeyDocument(id: $id) { objectKey } }',
+            { id: documentId },
+          );
+          expect(rekeyDocument.objectKey).not.toBe(objectKey);
+          expect((await fetch(before.url)).status).toBe(HttpStatus.NotFound);
+          expect(await storage.head(objectKey)).toBeNull();
+          expect(await storage.head(rekeyDocument.objectKey)).toMatchObject({ size: Buffer.byteLength(body) });
+
+          const { createShareLink: after } = await owners().expectOk(SHARE, { documentId });
+          const reopened = await fetch(after.url);
+          expect(await reopened.text()).toBe(body);
+          const { shareLinks } = await owners().expectOk('{ shareLinks { id state } }');
+          expect(shareLinks.find((link: { id: string }) => link.id === before.id).state).toBe('revoked');
+          expect(shareLinks.find((link: { id: string }) => link.id === after.id).state).toBe('active');
+        });
       });
 
       it('adds a file another tool put in the bucket, then serves it where it already was', async () => {

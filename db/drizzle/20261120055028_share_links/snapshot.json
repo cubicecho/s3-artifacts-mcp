@@ -1,0 +1,613 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "788ba9b8-3360-452d-b18f-5854a1a8aef5",
+  "prevIds": [
+    "2357af7f-cb6e-4e37-aaa9-b6668b245765"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "share_link_creator"
+      ],
+      "writes": [
+        "s|enum|public.share_link_creator",
+        "n|enum|public.share_link_creator",
+        "e|enum|public.share_link_creator",
+        "n|type|public.share_link_creator"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_enum",
+      "statementTarget": [
+        "enum",
+        "public",
+        "share_link_permission"
+      ],
+      "writes": [
+        "s|enum|public.share_link_permission",
+        "n|enum|public.share_link_permission",
+        "e|enum|public.share_link_permission",
+        "n|type|public.share_link_permission"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "app_settings"
+      ],
+      "writes": [
+        "s|tbl|public.app_settings",
+        "n|tbl|public.app_settings",
+        "e|tbl|public.app_settings",
+        "n|rel|public.app_settings",
+        "n|type|public.app_settings",
+        "n|rel|public.app_settings_pkey"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.share_link_permission"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "share_links"
+      ],
+      "writes": [
+        "s|tbl|public.share_links",
+        "n|tbl|public.share_links",
+        "e|tbl|public.share_links",
+        "n|rel|public.share_links",
+        "n|type|public.share_links",
+        "n|rel|public.share_links_pkey"
+      ],
+      "reads": [
+        "n|sch|public",
+        "n|enum|public.share_link_permission",
+        "n|enum|public.share_link_creator"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "share_links",
+        "idx_share_links_user_id"
+      ],
+      "writes": [
+        "s|idx|public.idx_share_links_user_id",
+        "n|idx|public.idx_share_links_user_id",
+        "e|idx|public.idx_share_links_user_id",
+        "n|rel|public.idx_share_links_user_id"
+      ],
+      "reads": [
+        "n|tbl|public.share_links",
+        "n|sch|public",
+        "n|col|public.share_links.user_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "share_links",
+        "idx_share_links_document_id"
+      ],
+      "writes": [
+        "s|idx|public.idx_share_links_document_id",
+        "n|idx|public.idx_share_links_document_id",
+        "e|idx|public.idx_share_links_document_id",
+        "n|rel|public.idx_share_links_document_id"
+      ],
+      "reads": [
+        "n|tbl|public.share_links",
+        "n|sch|public",
+        "n|col|public.share_links.document_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "app_settings"
+      ],
+      "writes": [
+        "s|fk|public.app_settings.app_settings_user_id_users_id_fkey",
+        "n|fk|public.app_settings.app_settings_user_id_users_id_fkey",
+        "e|fk|public.app_settings.app_settings_user_id_users_id_fkey",
+        "n|con|public.app_settings.app_settings_user_id_users_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.app_settings",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.app_settings.user_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "share_links"
+      ],
+      "writes": [
+        "s|fk|public.share_links.share_links_user_id_users_id_fkey",
+        "n|fk|public.share_links.share_links_user_id_users_id_fkey",
+        "e|fk|public.share_links.share_links_user_id_users_id_fkey",
+        "n|con|public.share_links.share_links_user_id_users_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.share_links",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.share_links.user_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "share_links"
+      ],
+      "writes": [
+        "s|fk|public.share_links.share_links_document_id_documents_id_fkey",
+        "n|fk|public.share_links.share_links_document_id_documents_id_fkey",
+        "e|fk|public.share_links.share_links_document_id_documents_id_fkey",
+        "n|con|public.share_links.share_links_document_id_documents_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.share_links",
+        "n|sch|public",
+        "n|tbl|public.documents",
+        "n|sch|public",
+        "n|col|public.share_links.document_id",
+        "n|col|public.documents.id",
+        "e|uniqueness|public.documents.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "app_settings",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "share_links",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "share_link_creator",
+        "values": [
+          "owner",
+          "mcp"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "share_link_permission",
+        "values": [
+          "view",
+          "download"
+        ],
+        "entityType": "enums"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "app_settings",
+        "name": "user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "app_settings",
+        "name": "max_upload_bytes",
+        "type": "bigint",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "104857600",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "app_settings",
+        "name": "default_link_expiry_hours",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "24",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "app_settings",
+        "name": "default_link_permission",
+        "type": "share_link_permission",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'download'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "app_settings",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "document_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "label",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "permission",
+        "type": "share_link_permission",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "url_enc",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "object_key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "expires_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "created_by",
+        "type": "share_link_creator",
+        "typeSchema": "public",
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "idx_share_links_user_id",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "user_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "idx_share_links_document_id",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "document_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "app_settings",
+        "name": "app_settings_user_id_users_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "share_links_user_id_users_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "share_links_document_id_documents_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "document_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "documents",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "app_settings",
+        "name": "app_settings_pkey",
+        "columns": [
+          "user_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "share_links",
+        "name": "share_links_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

@@ -1,9 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { type BucketFixture, bucketServer, MIXED_BUCKETS } from '@/components/domain/bucket-fixtures';
+import { MARKDOWN_DOCUMENT, PDF_DOCUMENT } from '@/components/domain/document-fixtures';
+import { mergeResolvers, shareLinkFixture, sharingServer } from '@/components/domain/share-link-fixtures';
 import { AppLayout } from '@/components/layouts/app-layout';
 import { clientId } from '@/lib/id';
 import { ROUTES } from '@/lib/routes';
+import { BYTES_PER_MEBIBYTE } from '@/lib/upload-limit';
 import { SettingsRoute, settingsLink } from './settings';
 
 /**
@@ -114,6 +117,8 @@ export const Ready: Story = {
     await expect(canvas.getByRole('tab', { name: 'Buckets' })).toHaveAttribute('aria-selected', 'true');
     await expect(canvas.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Buckets',
+      'Share links',
+      'General',
       'Auth',
       'API keys',
       'Appearance',
@@ -272,6 +277,60 @@ export const RevokesAKey: Story = {
   },
 };
 
+const sharing = sharingServer(
+  [PDF_DOCUMENT, MARKDOWN_DOCUMENT],
+  [
+    shareLinkFixture(PDF_DOCUMENT, { label: 'For the design review' }),
+    shareLinkFixture(MARKDOWN_DOCUMENT, { state: 'expired', expiresAt: '2026-11-01T10:00:00.000Z' }),
+  ],
+);
+/** The Share links tab: every document's links, with the filters. */
+export const ShareLinks: Story = {
+  parameters: {
+    router: at('share-links'),
+    apolloClient: { resolvers: mergeResolvers(RESOLVERS, sharing.resolvers) },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('tab', { name: 'Share links' })).toHaveAttribute('aria-selected', 'true');
+    const list = within(await canvas.findByRole('list', { name: 'Share links' }));
+    await expect(list.getAllByRole('listitem')).toHaveLength(2);
+    await expect(canvas.getByRole('group', { name: 'Show' })).toBeInTheDocument();
+  },
+};
+
+const general = sharingServer([]);
+/** What the General story raises the upload limit to. */
+const RAISED_LIMIT_MIB = 500;
+/** The General tab: the upload limit and the link defaults, saved with one button. */
+export const General: Story = {
+  parameters: {
+    router: at('general'),
+    apolloClient: { resolvers: mergeResolvers(RESOLVERS, general.resolvers) },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true');
+    const upload = await canvas.findByRole('spinbutton', { name: /Largest upload/ });
+    await userEvent.clear(upload);
+    await userEvent.type(upload, String(RAISED_LIMIT_MIB));
+    await userEvent.click(canvas.getByRole('button', { name: 'Save' }));
+    await expect(await canvas.findByText('Saved')).toBeInTheDocument();
+    await expect(general.sharing.settings.maxUploadBytes).toBe(RAISED_LIMIT_MIB * BYTES_PER_MEBIBYTE);
+  },
+};
+
+/** Phone width, on General: six tabs, the form and the expiry pills fit, and nothing pushes the page sideways. */
+export const NarrowGeneral: Story = {
+  globals: { viewport: { value: 'mobile1' } },
+  parameters: {
+    router: at('general'),
+    apolloClient: { resolvers: mergeResolvers(RESOLVERS, sharingServer([]).resolvers) },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByRole('button', { name: 'Save' })).toBeVisible();
+    await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
+  },
+};
+
 /** The Appearance tab: the theme as three tiles, and picking one checks it. */
 export const Appearance: Story = {
   parameters: { router: at('appearance') },
@@ -284,7 +343,7 @@ export const Appearance: Story = {
   },
 };
 
-/** Phone width, on Buckets: four tabs and a mixed list fit, and nothing pushes the page sideways. */
+/** Phone width, on Buckets: six tabs and a mixed list fit, and nothing pushes the page sideways. */
 export const NarrowBuckets: Story = {
   globals: { viewport: { value: 'mobile1' } },
   parameters: { apolloClient: { resolvers: withBuckets(MIXED_BUCKETS) } },

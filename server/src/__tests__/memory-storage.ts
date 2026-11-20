@@ -1,11 +1,13 @@
 import { Readable } from 'node:stream';
 import { buffer } from 'node:stream/consumers';
-import type { BucketConnection, Storage, StorageFactory } from '../storage/storage.ts';
+import { type BucketConnection, contentDisposition, type Storage, type StorageFactory } from '../storage/storage.ts';
 
 // Storage over Maps, standing in for an S3-compatible service in tests. A backend holds buckets by
 // name, as a service does, so a test can make one fail before the code under test connects to it.
 // Presigned URLs point at a host only the backend's `fetch` answers, so the bucket test's share-link
-// step runs without a network.
+// step and a share link run without a network. They carry the type and disposition they were signed
+// with as S3's do (`response-content-type`, `response-content-disposition`), and the fetch answers
+// with them.
 
 /** The operations a test can make fail. */
 export type MemoryOperation = Exclude<keyof Storage, 'presignGet'>;
@@ -45,6 +47,10 @@ export interface MemoryBackend {
 /** The origin presigned URLs from a memory backend point at. */
 export const MEMORY_ORIGIN = 'http://memory.test';
 const NOT_FOUND = 404;
+/** The query parameters a presigned GET carries, as S3 names them. */
+const EXPIRES_PARAM = 'expires';
+const CONTENT_TYPE_PARAM = 'response-content-type';
+const DISPOSITION_PARAM = 'response-content-disposition';
 /** A ListObjectsV2 page's size on S3. */
 const DEFAULT_PAGE_SIZE = 1000;
 
@@ -137,9 +143,10 @@ function createMemoryStorage(name: string): MemoryStorage {
     async copy(fromKey, toKey) {
       failIfAsked('copy');
       const object = objects.get(fromKey);
-      if (object !== undefined) {
-        objects.set(toKey, { ...object });
+      if (object === undefined) {
+        throw serviceError('NoSuchKey', 'The specified key does not exist.');
       }
+      objects.set(toKey, { ...object });
     },
     async delete(keys) {
       failIfAsked('delete');
@@ -147,9 +154,14 @@ function createMemoryStorage(name: string): MemoryStorage {
         objects.delete(key);
       }
     },
-    async presignGet(key, { expiresInSeconds }) {
+    async presignGet(key, { filename, contentType, disposition, expiresInSeconds }) {
       const origin = storage.publicOrigin ?? MEMORY_ORIGIN;
-      return `${origin}/${name}/${encodeURIComponent(key)}?expires=${expiresInSeconds}`;
+      const params = new URLSearchParams({
+        [EXPIRES_PARAM]: String(expiresInSeconds),
+        [CONTENT_TYPE_PARAM]: contentType,
+        [DISPOSITION_PARAM]: contentDisposition(filename, disposition),
+      });
+      return `${origin}/${name}/${encodeURIComponent(key)}?${params}`;
     },
   };
   return storage;
@@ -193,7 +205,12 @@ export function createMemoryBackend(): MemoryBackend {
       if (object === undefined) {
         return new Response('<Error><Code>NoSuchKey</Code></Error>', { status: NOT_FOUND });
       }
-      return new Response(new Uint8Array(object.body), { headers: { 'content-type': object.contentType } });
+      const disposition = url.searchParams.get(DISPOSITION_PARAM);
+      const headers = new Headers({ 'content-type': url.searchParams.get(CONTENT_TYPE_PARAM) ?? object.contentType });
+      if (disposition !== null) {
+        headers.set('content-disposition', disposition);
+      }
+      return new Response(new Uint8Array(object.body), { headers });
     },
   };
 }

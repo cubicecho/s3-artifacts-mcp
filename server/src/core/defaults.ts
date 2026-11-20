@@ -119,10 +119,13 @@ export const BUCKET_DEFAULTS: Readonly<BucketSettings> = Object.freeze({
 /** Uploads into a bucket through the server (`PUT /api/documents/:id/content`), and the rows waiting on one. */
 export interface UploadSettings {
   /**
-   * The largest file an upload may declare, in bytes. Step 4's `app_settings.max_upload_bytes` takes its place as
-   * the limit the owner sets, and this stays as the bound that setting is checked against.
+   * The largest upload limit the owner may set in Settings → General, in bytes: the bound `app_settings.max_upload_bytes`
+   * is checked against. lib-storage sends at most 10,000 parts of `partSizeBytes` (8 MiB), about 78 GiB, so 50 GiB
+   * leaves room. Raising it past that means raising `partSizeBytes` too.
    */
   maxUploadBytes: number;
+  /** The smallest upload limit the owner may set, in bytes. */
+  minUploadBytes: number;
   /**
    * How many files the app sends at once. The app keeps its own copy of this number (it cannot import the
    * server's); this is the documented value the two agree on.
@@ -140,12 +143,47 @@ export interface UploadSettings {
 
 /** The shipped values of `UploadSettings`. */
 export const UPLOAD_DEFAULTS: Readonly<UploadSettings> = Object.freeze({
-  maxUploadBytes: 104_857_600,
+  maxUploadBytes: 53_687_091_200,
+  minUploadBytes: 1_048_576,
   concurrency: 3,
   pendingTtlMinutes: 60,
   sweepIntervalMinutes: 10,
   partSizeBytes: 8_388_608,
   partQueueSize: 4,
+});
+
+/** Copying an object to another key in its bucket, as `rekeyDocument` does. */
+export interface CopySettings {
+  /** The largest object one CopyObject call copies, in bytes: S3's own limit is 5 GiB. Past it a copy goes in parts. */
+  maxSingleCopyBytes: number;
+  /** The size of each part of a copy in parts, in bytes. 50 GiB is 100 of them; S3 takes 5 MiB to 5 GiB a part. */
+  copyPartSizeBytes: number;
+  /** How many parts of one copy run at once. */
+  copyPartQueueSize: number;
+}
+
+/** The shipped values of `CopySettings`. */
+export const COPY_DEFAULTS: Readonly<CopySettings> = Object.freeze({
+  maxSingleCopyBytes: 5_368_709_120,
+  copyPartSizeBytes: 536_870_912,
+  copyPartQueueSize: 4,
+});
+
+/** Share links: presigned GETs on a bucket's public endpoint (D5). */
+export interface ShareLinkSettings {
+  /** The shortest a share link may last, in hours. */
+  minExpiryHours: number;
+  /** The longest a share link may last, in hours: SigV4's limit of 7 days, on AWS, MinIO and RustFS alike. */
+  maxExpiryHours: number;
+  /** The longest label a share link may be given, in characters. */
+  labelMaxLength: number;
+}
+
+/** The shipped values of `ShareLinkSettings`. */
+export const SHARE_LINK_DEFAULTS: Readonly<ShareLinkSettings> = Object.freeze({
+  minExpiryHours: 1,
+  maxExpiryHours: 168,
+  labelMaxLength: 100,
 });
 
 /** What a document may hold. */

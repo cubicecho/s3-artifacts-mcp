@@ -19,6 +19,20 @@ export const UPLOAD_DEFAULTS: Readonly<UploadSettings> = Object.freeze({
   concurrency: 3,
 });
 
+/** What the share dialog offers. */
+export interface ShareLinkSettings {
+  /**
+   * The expiries offered as one press, in hours, drawn in this order. Those past the server's `maxLinkExpiryHours`
+   * are not drawn; anything else is a custom amount.
+   */
+  expiryPresetHours: Readonly<Record<string, number>>;
+}
+
+/** What the share dialog and Settings → General offer. */
+export const SHARE_LINK_DEFAULTS: Readonly<ShareLinkSettings> = Object.freeze({
+  expiryPresetHours: Object.freeze({ oneHour: 1, oneDay: 24, threeDays: 72, sevenDays: 168 }),
+});
+
 /** How much of a document the document page draws in place. */
 export interface PreviewSettings {
   /**

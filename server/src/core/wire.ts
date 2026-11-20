@@ -8,9 +8,14 @@ export const SECONDS_PER_MINUTE = 60;
 export const SECONDS_PER_HOUR = 3600;
 /** Seconds in one day. */
 export const SECONDS_PER_DAY = 86_400;
-/** Bytes in one mebibyte, the unit upload limits are shown in. */
+/** Milliseconds in one hour. */
+export const MS_PER_HOUR = 3_600_000;
+/** Bytes in one kibibyte. */
 export const BYTES_PER_KIBIBYTE = 1024;
+/** Bytes in one mebibyte, the unit upload limits are shown in. */
 export const BYTES_PER_MEBIBYTE = 1_048_576;
+/** Bytes in one gibibyte, the unit a whole number of them is shown in. */
+export const BYTES_PER_GIBIBYTE = 1_073_741_824;
 /** The most bytes of UTF-8 one UTF-16 code unit (one place in a JS string) takes: a character past U+FFFF is two units in four bytes. */
 export const MAX_UTF8_BYTES_PER_CODE_UNIT = 3;
 

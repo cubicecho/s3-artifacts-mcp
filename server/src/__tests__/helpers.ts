@@ -6,6 +6,7 @@ import { pushSchema } from 'drizzle-kit/api-postgres';
 import { getTableName, is, sql, Table } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { type ExecutionResult, graphql } from 'graphql';
+import { ensureAppSettings } from '../app-settings/app-settings.ts';
 import { type AuthHost, fixedAuthHost } from '../auth/auth-host.ts';
 import { type Auth, createAuth, type MagicLink } from '../auth/better-auth.ts';
 import { createRateLimiter, type RateLimiter } from '../auth/rate-limit.ts';
@@ -59,9 +60,13 @@ export async function closeTestDb(db: TestDb): Promise<void> {
   await (db as any).$client.close();
 }
 
-/** A user row created straight through Drizzle — signup is not what is under test. */
+/**
+ * A user row created straight through Drizzle, with the settings row better-auth's `user.create.after` would
+ * make: signup is not what is under test.
+ */
 export async function createUser(db: TestDb, email: string): Promise<string> {
   const [user] = await db.insert(dbSchema.users).values({ email }).returning();
+  await ensureAppSettings(db, user.id);
   return user.id;
 }
 

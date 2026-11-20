@@ -2,6 +2,8 @@ import type { DB } from '@cubicecho/s3-artifacts-mcp-db';
 import { type Document, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import type { Context } from '../core/context.ts';
+import { notFound, requireAuth } from '../core/errors.ts';
 
 // Reading one document row, as every path that names a document by id does: the resolvers, the
 // two content routes and the sweeper. An id that is not a UUID names nothing, exactly as a
@@ -41,6 +43,22 @@ export async function findOwnedDocument(db: DB, userId: string, id: unknown): Pr
     .from(documents)
     .where(and(eq(documents.id, documentId), eq(documents.userId, userId)));
   return row ?? null;
+}
+
+/**
+ * Loads one of the caller's documents, for a resolver.
+ *
+ * @param ctx - The request.
+ * @param id - The document's id, as sent.
+ * @returns The row.
+ * @throws NOT_FOUND when it is malformed, missing or not the caller's.
+ */
+export async function ownDocument(ctx: Context, id: unknown): Promise<Document> {
+  const row = await findOwnedDocument(ctx.db, requireAuth(ctx), id);
+  if (row === null) {
+    throw notFound(DOCUMENT_NOT_FOUND);
+  }
+  return row;
 }
 
 /**

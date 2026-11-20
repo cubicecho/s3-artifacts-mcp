@@ -388,10 +388,14 @@ function BucketForm({ title, bucket, presets, onSaved, onOpenChange }: BucketFor
           {/* The provider decides what is required, and the name and endpoint are other fields'
               placeholders, so these re-render as those values change. */}
           <form.Subscribe
-            selector={(state) => [state.values.provider, state.values.name, state.values.endpoint] as const}
+            selector={(state) =>
+              [state.values.provider, state.values.name, state.values.endpoint, state.values.accessKeyId] as const
+            }
           >
-            {([provider, name, endpoint]) => {
+            {([provider, name, endpoint, accessKeyId]) => {
               const preset = presetOf(provider);
+              // A share link is signed with the access key, so a link made with the old one stops opening.
+              const isNewAccessKey = isEdit && accessKeyId.trim() !== bucket.accessKeyId;
               return (
                 <>
                   <SelectField
@@ -524,6 +528,13 @@ function BucketForm({ title, bucket, presets, onSaved, onOpenChange }: BucketFor
                       </>
                     }
                   />
+                  {isNewAccessKey && (
+                    <Alert
+                      variant="warning"
+                      title="Existing share links will stop working"
+                      description="Every share link of this bucket's documents was signed with the old access key, so none of them opens once the key changes. Make new links after saving."
+                    />
+                  )}
                 </>
               );
             }}

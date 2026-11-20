@@ -74,5 +74,14 @@ export const DOCUMENTS_SDL = parse(`
     permission), with what was added before that kept.
     """
     scanBucket(id: UUID!): BucketScan!
+    """
+    Revokes every share link of a document by moving its object: the file is copied to a new key at the bucket's
+    top level, the document is pointed at it, and the old object is deleted, so every URL signed for the old key
+    answers 404 from the bucket. A scanned file leaves the key the owner put it at for one the app makes. NOT_FOUND
+    for a document that is missing or someone else's; CONFLICT for one still uploading, or one changed while this
+    ran; BAD_USER_INPUT when the bucket's secret can no longer be decrypted; STORAGE_ERROR when the bucket refuses
+    the copy or the old object's delete, with nothing changed.
+    """
+    rekeyDocument(id: UUID!): Document!
   }
 `);

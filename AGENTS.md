@@ -14,9 +14,10 @@ needs. The agreed design is [`.agents/plan.md`](.agents/plan.md). Read it
 before adding a feature: it has the data model, the GraphQL surface, the MCP
 tools and the build order.
 
-**Where the build is:** step 3 of the plan (documents). Sign-in, API keys,
-health, settings, buckets, and documents (upload, preview, rename, delete, the
-bucket tree) exist. Share links, MCP and tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
+**Where the build is:** step 4 of the plan (share links). Sign-in, API keys,
+health, settings, buckets, documents (upload, scan, preview, rename, delete, the
+bucket tree), share links (with re-keying) and `app_settings` exist. MCP and
+tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
 Don't write code or docs as if they exist.
 
 ## Skills to load
@@ -47,7 +48,7 @@ As Engrafo, minus OCR, pgvector and the embedding model.
 | API | graphql-yoga 5 on Express 5, drizzle-graphql generated schema + SDL extensions |
 | Database | Drizzle `1.0.0-rc.5` + PostgreSQL (`postgres-js`); PGlite in tests only |
 | Auth | better-auth (magic link, OIDC pairing, api-key plugin), `@cubicecho/graphql-better-auth` |
-| Storage | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` (`@aws-sdk/lib-storage` arrives with uploads in step 3) |
+| Storage | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`, `@aws-sdk/lib-storage` |
 | MCP (planned) | `@modelcontextprotocol/sdk`, stateless Streamable HTTP |
 | Testing | Vitest (node on PGlite, dom), Storybook + Playwright |
 | Tooling | Biome, Node 26 ESM with no server build, semantic-release, Docker (`node:26-slim`) |
@@ -57,7 +58,7 @@ Packages: `@cubicecho/s3-artifacts-mcp-app`, `@cubicecho/s3-artifacts-mcp-server
 
 ## Project structure
 
-As of step 3. The folders later steps add are in the plan's "Layout".
+As of step 4. The folders later steps add are in the plan's "Layout".
 
 ```
 s3-artifacts-mcp/
@@ -71,9 +72,11 @@ s3-artifacts-mcp/
 │       │   ├── *.tsx        # cubeui shells (PageLayout, CardLayout, SidebarLayout, LoadState, …)
 │       │   ├── layouts/     # app-layout (the sidebar shell around every signed-in page), require-auth
 │       │   └── domain/      # bucket-tree, bucket-sidebar, upload-panel, upload-dialog, document-preview-card, document-details-card,
-│       │                    #   rename-document-dialog, bucket-settings, bucket-form-dialog, bucket-secret-dialog, bucket-test-report, sso-pairing, api-key-settings
-│       ├── routes/          # login, verify, sso, settings (Buckets, Auth, API keys, Appearance), documents (/), document (/documents/:id)
-│       ├── lib/             # apollo, auth, library (the tree's and list's one query), upload, content-url, page, cn()
+│       │                    #   rename-document-dialog, bucket-settings, bucket-form-dialog, bucket-secret-dialog, bucket-test-report, sso-pairing, api-key-settings,
+│       │                    #   document-share-links, share-link-dialog, share-link-list, share-link-settings, link-expiry-field, general-settings,
+│       │                    #   and the stories' mock servers (*-fixtures.ts)
+│       ├── routes/          # login, verify, sso, settings (Buckets, Share links, General, Auth, API keys, Appearance), documents (/), document (/documents/:id)
+│       ├── lib/             # apollo, auth, library (the tree's and list's one query), upload, upload-limit, share-links, content-url, page, cn()
 │       └── main.tsx         # Providers + the router
 ├── server/                  # GraphQL API (port 3005)
 │   ├── __generated__/       # Generated SDL (not committed)
@@ -81,21 +84,23 @@ s3-artifacts-mcp/
 │       ├── index.ts         # Boot only: preflight, wait for Postgres, migrate, createApp, listen, stop on a signal
 │       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env, secrets
 │       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs), content (/api routes)
-│       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema, docs, parent-id
+│       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema, docs, parent-id, naming
 │       ├── auth/            # better-auth (with the owner gate), auth-host, admin, rate-limit, resolvers
 │       ├── sso/             # Pairing an OIDC provider from a setup URL: settings, pairing (RFC 7591/7592), resolvers
 │       ├── api-keys/        # resolvers: list, make and revoke the caller's API keys
 │       ├── buckets/         # presets, input (validation, slugs), test (the connection probe), sdl, resolvers
 │       ├── storage/         # storage (the Storage interface), s3 (one bucket), registry (all of them)
-│       ├── documents/       # keys, create, scan, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
+│       ├── documents/       # keys, create, scan, rekey, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
+│       ├── share-links/     # create (signing), expiry, state, sdl, resolvers
+│       ├── app-settings/    # app-settings (read, bounds, update), sdl, resolvers
 │       └── __tests__/       # Server tests, in the same folders as src; helpers.ts at the root
 ├── db/
 │   ├── drizzle/             # Generated migrations (committed)
 │   └── src/
-│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets, documents
+│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets, documents, share-links, app-settings
 │       ├── schema.ts        # Every model
 │       ├── relations.ts     # defineRelations config (drives the GraphQL schema)
-│       ├── defaults.ts      # DATABASE_DEFAULTS
+│       ├── defaults.ts      # DATABASE_DEFAULTS, APP_SETTINGS_DEFAULTS (the columns' defaults)
 │       ├── wait.ts          # waitForDatabase
 │       ├── ssl.ts           # requiresSsl
 │       └── index.ts         # The DB type, the singleton, closeDatabase
@@ -142,7 +147,7 @@ what is about the network.** Everything else is a setting in the UI.
 | Var | Why it is in env |
 |---|---|
 | `DATABASE_URL` | Settings live in the database. |
-| `BETTER_AUTH_SECRET` | Signs sessions, and derives the key bucket secrets (later share URLs) are encrypted with. Rotating it makes every stored bucket secret unreadable; Settings then asks for each again. |
+| `BETTER_AUTH_SECRET` | Signs sessions, and derives the key bucket secrets and share URLs are encrypted with. Rotating it makes every stored bucket secret unreadable; Settings then asks for each again. |
 | `APP_URL` (optional) | Magic-link and OIDC redirect URLs. |
 | `PORT` (optional) | Listening port. |
 | `TRUST_PROXY` (optional) | The sign-in throttle needs it before anyone is signed in. |
@@ -164,6 +169,11 @@ The rules are in `cubicecho_backend` → `schema.md`. What is particular here:
 
 - **The schema is generated from `db/src/relations.ts`, not `schema.ts`.** A
   table with no entry there gets no relation fields.
+- **Names come from `typeNames` (`graphql/naming.ts`)**: plural keys are
+  singularized (`documents` → `Document`), except `appSettings`, which keeps
+  its name (type `AppSettings`, read `appSettings`). Every `resolveSelection`
+  passes `typeNameMapper: typeNames`, so a hand-written field answers in the
+  generated type's shape.
 - **Every generated write is off.** `features` in `graphql/tenancy.ts` disables
   insert, update, updateMany and delete, because every write here is a step in a
   lifecycle (a document without its object is not a document). The generated
@@ -176,9 +186,11 @@ The rules are in `cubicecho_backend` → `schema.md`. What is particular here:
 - **Tables kept out of the schema** are excluded in `build-schema.ts`:
   better-auth's (`sessions`, `accounts`, `verifications`, `apikeys`) and
   `oidc_settings`, which holds client secrets. A table with a secret column
-  excludes that column: `buckets.secret_access_key_enc` now, `share_links.url_enc`
-  in step 4. Mutations that return such a row build it with drizzle-graphql's
+  excludes that column: `buckets.secret_access_key_enc` and `share_links.url_enc`.
+  Mutations that return such a row build it with drizzle-graphql's
   `resolveSelection`, so the column cannot leak through a hand-written path.
+  (drizzle-graphql warns at codegen that generated inserts for both tables can
+  never succeed. That is expected: every generated write is off.)
 
 ## Rules that carry weight
 
@@ -314,8 +326,8 @@ body only with the `page` and `prose` columns, so every full-width page passes
 
 **Settings sections are tabs in the query string** (`?tab=`), a `Link` per tab,
 so a section can be linked and survives a reload. An unknown tab opens the
-first. The tabs are Buckets, Auth, API keys and Appearance; the plan adds Share
-links, MCP and General. Link to one with `settingsLink(tab)`. **The theme is
+first. The tabs are Buckets, Share links, General, Auth, API keys and
+Appearance; the plan adds MCP. Link to one with `settingsLink(tab)`. **The theme is
 chosen only on Appearance** (the card picker); the sidebar, the bar and page
 headers carry no theme picker. The sign-in pages keep their compact one, since
 nobody signed out can reach Settings.
@@ -361,7 +373,60 @@ guarded on `pending_upload`). Any other ending (short, long, storage failure,
 client gone) aborts the multipart upload and deletes the object and the row.
 The sweeper (`documents/sweep.ts`, started only in `index.ts`) drops pending
 rows idle past `UPLOAD_DEFAULTS.pendingTtlMinutes`. Lists show `ready` only.
-Object keys are `<uuid>-<ascii filename>` at the bucket's top level.
+Object keys are `<uuid>-<ascii filename>` at the bucket's top level. The size
+limit is the owner's `app_settings.max_upload_bytes`, read by both
+`createDocumentUpload` and the PUT (a limit lowered in between refuses the PUT
+with 413), and never past `UPLOAD_DEFAULTS.maxUploadBytes` (50 GiB, bounded by
+lib-storage's 10,000 parts of `partSizeBytes`). The upload panel reads the
+limit from the server (`lib/upload-limit.ts`); don't write a number into the
+app.
+
+**`app_settings` is one row per account, keyed and scoped by `user_id`.** It is
+"the instance's settings" only because there is one owner; it has a `scope`
+entry and a `contextValues.userId` like any table, so the tenancy test covers
+it and a second account would get its own. better-auth's `user.create.after`
+makes the row (`ensureAppSettings`), a migration made one for every account
+that predates the table, and `readAppSettings` makes it if it is somehow gone,
+so no path depends on the hook. Its columns' defaults are
+`APP_SETTINGS_DEFAULTS` in `db/src/defaults.ts`; the bounds every value is
+checked against are in `core/defaults.ts` (`UPLOAD_DEFAULTS.min/maxUploadBytes`,
+`SHARE_LINK_DEFAULTS.min/maxExpiryHours`) and reach the app through
+`appSettingsLimits`. A new setting is a column, a bound in a defaults group,
+and a field on `updateAppSettings`, never an env var. The cache keys
+`AppSettings` by `userId` (`TYPE_POLICIES` in `lib/apollo.ts`), so select it.
+
+**Share links are presigned GETs on the bucket's `public_endpoint` (D5), and
+the bucket, not this database, decides whether one opens.**
+
+- `createShareLink` (`share-links/create.ts`, shared with MCP later through its
+  `createdBy`) signs with `Storage.presignGet`: `inline` for `view`,
+  `attachment` with the filename for `download`, and the document's content
+  type. Only a `ready` document (CONFLICT otherwise). A permission or expiry
+  left out takes the owner's `app_settings` default. The expiry is a whole
+  number of hours from `SHARE_LINK_DEFAULTS.minExpiryHours` to
+  `maxExpiryHours` (168, SigV4's limit): BAD_USER_INPUT otherwise. There is no
+  "never".
+- The URL is sealed with `SecretPurpose.ShareLinkUrl` and read back only by
+  `ShareLink.url` for the owner, which answers null (not an error) once
+  `BETTER_AUTH_SECRET` has changed.
+- `ShareLink.state` is worked out, never stored: **revoked** when the link's
+  `object_key` is no longer the document's, else **expired** past
+  `expires_at`, else **active**. Revoked wins, so a revoked link never turns
+  "expired" later.
+- `deleteShareLink` removes the row only. The URL keeps working until it
+  expires, and the UI calls it "Remove from list" and says so.
+- **`rekeyDocument` is the only revocation.** Its order matters
+  (`documents/rekey.ts`): copy to `objectKeyFor(newUuid, filename)`, then move
+  the row (guarded on the old key, so a racing re-key or delete answers
+  CONFLICT and the copy is deleted), then delete the old object. Copy first so
+  the row never names an empty key; the delete last. If the bucket refuses that
+  delete the old links still work, so the move is undone (row back to the old
+  key, copy deleted) and STORAGE_ERROR says nothing was revoked: a link shown as
+  revoked must really be dead. A scanned file leaves the owner's key for an
+  app-made one, and the confirm says so. Copies past `COPY_DEFAULTS.maxSingleCopyBytes`
+  (CopyObject's 5 GiB) go in parts.
+- Rotating a bucket's access key kills every link signed with it; the bucket
+  form warns when the key changes on edit.
 
 **A scan makes the files already in a bucket documents, where they are.**
 `scanBucket` (`documents/scan.ts`) lists the bucket a page at a time and adds
@@ -422,10 +487,6 @@ too.
 None of this exists yet. When you build a step, move its rules up into "Rules
 that carry weight" and the structure tree, and delete them here.
 
-- **Share links (step 4).** Presigned GETs on the bucket's `public_endpoint`,
-  stored encrypted. Expiry is capped at 7 days (SigV4's maximum). A single link
-  cannot be revoked; `rekeyDocument` revokes them all. `app_settings` arrives
-  here.
 - **MCP per bucket (step 5).** `/mcp/b/:slug`, stateless Streamable HTTP, API
   key only. Read-only unless the bucket is `mcp_writable`. Every tool is scoped
   by `bucket_id` in `mcp/access.ts` and re-reads the bucket per call. The write
@@ -442,6 +503,10 @@ The rules are in `cubicecho_frontend` → `testing.md`. What is particular here:
 - **Stories live next to the component**, so a component and the story claiming
   it works change in the same diff. **Nothing under `components/ui/`**: cubeui
   has its own Storybook.
+- **Mock servers live in `components/domain/*-fixtures.ts`**: `bucketServer`,
+  `documentServer`, `shareLinkServer`, and `sharingServer` (documents and
+  links over one list, so a re-key moves the document the page shows).
+  `mergeResolvers` lays one over another.
 - **There are two ways to give a story a server**, under
   `parameters.apolloClient` (`app/.storybook/graphql.tsx`). `mocks` is Apollo's
   `MockedProvider`, for when the request is the subject. `resolvers` is a
@@ -455,6 +520,10 @@ The rules are in `cubicecho_frontend` → `testing.md`. What is particular here:
   browser, PGlite times out in a `beforeEach`, which is the wrong place to look.
 - Every route and every domain component state (empty, loading, error, filled)
   has a story.
+- **A story leaves no Radix menu, select or dialog open.** One left open keeps
+  `aria-hidden` on the rest of the page for the stories after it: close it at
+  the end. After picking from a select, wait for its options to go before
+  querying the page by role, for the same reason.
 
 ## Code style
 

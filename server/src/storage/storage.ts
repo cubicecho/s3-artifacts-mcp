@@ -104,7 +104,7 @@ export interface Storage {
    * objects yet, so they are not listed.
    */
   listObjects(): AsyncIterable<ListedObject[]>;
-  /** Copies an object to another key in the same bucket. */
+  /** Copies an object to another key in the same bucket, its type kept, in parts when it is past CopyObject's 5 GiB. */
   copy(fromKey: string, toKey: string): Promise<void>;
   /** Deletes the objects at the keys. A key with nothing at it is not an error. */
   delete(keys: string[]): Promise<void>;

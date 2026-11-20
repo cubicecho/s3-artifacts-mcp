@@ -5,6 +5,8 @@ import { CardLayout } from '@/components/card-layout';
 import { ApiKeySettings } from '@/components/domain/api-key-settings';
 import { LogOut } from '@/components/domain/app-icons';
 import { BucketSettings } from '@/components/domain/bucket-settings';
+import { GeneralSettings } from '@/components/domain/general-settings';
+import { ShareLinkSettings } from '@/components/domain/share-link-settings';
 import { SsoSettings } from '@/components/domain/sso-pairing';
 import { LoadState } from '@/components/load-state';
 import { PageLayout } from '@/components/page-layout';
@@ -34,6 +36,8 @@ export const SETTINGS_TAB_PARAM = 'tab';
 /** The tabs, in order. The first is where an absent or unknown `?tab=` lands. */
 export const SETTINGS_TABS = [
   { value: 'buckets', label: 'Buckets' },
+  { value: 'share-links', label: 'Share links' },
+  { value: 'general', label: 'General' },
   { value: 'auth', label: 'Auth' },
   { value: 'api-keys', label: 'API keys' },
   { value: 'appearance', label: 'Appearance' },
@@ -72,8 +76,9 @@ export function settingsLink(tab: SettingsTab): string {
 }
 
 /**
- * The owner's settings, a tab each: the buckets documents are stored in, how they sign in, the
- * API keys MCP clients use, and how the app looks on this device. The open tab is in the URL
+ * The owner's settings, a tab each: the buckets documents are stored in, every share link, the
+ * upload limit and link defaults, how they sign in, the API keys MCP clients use, and how the app
+ * looks on this device. The open tab is in the URL
  * (`?tab=api-keys`); Buckets is first, so `/settings` opens there.
  *
  * @returns The settings page.
@@ -90,7 +95,7 @@ export function SettingsRoute() {
       <PageLayout
         iconSlot={<Settings />}
         title="Settings"
-        description="Where documents are stored, how you sign in, the keys MCP clients use, and how this looks."
+        description="Where documents are stored, how they are shared, how you sign in, the keys MCP clients use, and how this looks."
         width="full"
         headerContentSlot={
           <TabsList aria-label="Settings">
@@ -119,6 +124,14 @@ export function SettingsRoute() {
               <>
                 <TabsContent value="buckets" className="flex flex-col gap-6">
                   <BucketSettings />
+                </TabsContent>
+
+                <TabsContent value="share-links" className="flex flex-col gap-6">
+                  <ShareLinkSettings />
+                </TabsContent>
+
+                <TabsContent value="general" className="flex flex-col gap-6">
+                  <GeneralSettings />
                 </TabsContent>
 
                 <TabsContent value="auth" className="flex flex-col gap-6">

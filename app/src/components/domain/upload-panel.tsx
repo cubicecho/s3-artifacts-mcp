@@ -1,4 +1,4 @@
-import { useMutation } from '@apollo/client/react';
+import { useMutation, useQuery } from '@apollo/client/react';
 import { useContext, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { graphql } from '@/__generated__';
@@ -20,6 +20,7 @@ import { lastBucketId, preselectBucket, rememberBucket } from '@/lib/last-bucket
 import { sortBuckets } from '@/lib/library';
 import { documentPath } from '@/lib/routes';
 import { createLimiter, flattenUpload, isAbort, UploadSendContext, uploadContentType } from '@/lib/upload';
+import { describeUploadLimit, UploadLimit } from '@/lib/upload-limit';
 
 const CreateDocumentUpload = graphql(`
   mutation CreateDocumentUpload($bucketId: UUID!, $filename: String!, $contentType: String, $size: Float!) {
@@ -111,6 +112,8 @@ function isActive(job: Job): boolean {
 export function UploadPanel({ buckets, preferredSlug, onUploaded, onBusyChange }: UploadPanelProps) {
   const send = useContext(UploadSendContext);
   const [createUpload] = useMutation(CreateDocumentUpload);
+  // The owner's limit, from Settings → General. Until it arrives the server is the only check, as it always is.
+  const maxUploadBytes = useQuery(UploadLimit).data?.appSettings?.maxUploadBytes ?? null;
   const [bucketId, setBucketId] = useState(() => preselectBucket(buckets, preferredSlug, lastBucketId()));
   const [jobs, setJobs] = useState<Job[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -206,20 +209,22 @@ export function UploadPanel({ buckets, preferredSlug, onUploaded, onBusyChange }
     }
     setNotice(null);
     rememberBucket(bucketId);
-    const added = flat.files.map(
-      (file): Job => ({
+    const added = flat.files.map((file): Job => {
+      // Refused here rather than sent to be refused: the server checks the same limit again.
+      const isTooLarge = maxUploadBytes !== null && file.size > maxUploadBytes;
+      return {
         key: clientId(),
         file,
         bucketId,
         progress: 0,
-        phase: JobPhase.Queued,
-        error: null,
+        phase: isTooLarge ? JobPhase.Failed : JobPhase.Queued,
+        error: isTooLarge ? `Larger than the ${describeUploadLimit(maxUploadBytes)} upload limit` : null,
         documentId: null,
-      }),
-    );
+      };
+    });
     // Newest first, and the finished ones from an earlier pick cleared away.
     setJobs((current) => [...added, ...current.filter((job) => job.phase !== JobPhase.Done)]);
-    for (const job of added) {
+    for (const job of added.filter((entry) => entry.phase === JobPhase.Queued)) {
       enqueue(job);
     }
   }
@@ -269,7 +274,11 @@ export function UploadPanel({ buckets, preferredSlug, onUploaded, onBusyChange }
 
       <FilePicker
         label="Drop files or a folder here, or click to choose"
-        hint="A folder's files are uploaded side by side: a bucket has no folders."
+        hint={
+          maxUploadBytes === null
+            ? "A folder's files are uploaded side by side: a bucket has no folders."
+            : `Up to ${describeUploadLimit(maxUploadBytes)} a file. A folder's files are uploaded side by side: a bucket has no folders.`
+        }
         multiple
         read="none"
         onPickMany={start}

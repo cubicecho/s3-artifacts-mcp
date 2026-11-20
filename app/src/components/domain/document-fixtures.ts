@@ -3,6 +3,7 @@ import type { DocumentStatus } from '@/__generated__/graphql';
 import { BUCKET_PRESETS, type BucketFixture, MINIO_BUCKET, S3_BUCKET } from '@/components/domain/bucket-fixtures';
 import { clientId } from '@/lib/id';
 import type { SendUpload } from '@/lib/upload';
+import { describeUploadLimit } from '@/lib/upload-limit';
 
 // Documents as the server answers them, a mock server whose mutations really change them, and a
 // stand-in for the PUT that sends a file's bytes. The mock executes against the real SDL, so a
@@ -27,7 +28,8 @@ export interface DocumentFixture {
   content: string;
 }
 
-const USER_ID = '9f0e1d2c-3b4a-4596-8877-665544332211';
+/** The owner every fixture belongs to. */
+export const USER_ID = '9f0e1d2c-3b4a-4596-8877-665544332211';
 const SHA = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
 /** A `data:` URL holding text, as a content URL for a text document. */
@@ -209,7 +211,7 @@ export const MIXED_DOCUMENTS: readonly DocumentFixture[] = [
   CSV_DOCUMENT,
 ];
 
-/** The server's upload limit: 100 MiB, until Settings → General can change it. */
+/** The owner's upload limit as a new instance has it: 100 MiB, until Settings → General changes it. */
 export const UPLOAD_LIMIT_BYTES = 104_857_600;
 
 /** How a fake send answers a file, by its filename. */
@@ -240,6 +242,8 @@ interface DocumentServerOptions {
    * document already has is counted as listed.
    */
   bucketFiles?: Readonly<Record<string, readonly string[]>>;
+  /** The owner's upload limit, which `appSettings` answers and `createDocumentUpload` holds files to. */
+  uploadLimitBytes?: number;
   /** What `contentUrl` answers for a document, overriding its `content`, by how many times it was asked. */
   contentUrl?: (document: DocumentFixture, asked: number, download: boolean) => string;
 }
@@ -299,6 +303,8 @@ export function documentServer(
     (where?.status?.eq == null || document.status === where.status.eq) &&
     (where?.bucketId?.eq == null || document.bucketId === where.bucketId.eq);
 
+  const uploadLimit = options.uploadLimitBytes ?? UPLOAD_LIMIT_BYTES;
+
   const resolvers = {
     Query: {
       buckets: () => {
@@ -308,6 +314,13 @@ export function documentServer(
         return buckets;
       },
       bucketPresets: () => BUCKET_PRESETS,
+      appSettings: () => ({
+        userId: USER_ID,
+        maxUploadBytes: uploadLimit,
+        defaultLinkExpiryHours: 24,
+        defaultLinkPermission: 'download',
+        updatedAt: '2026-11-01T10:00:00.000Z',
+      }),
       documents: (_parent: unknown, args: { where?: DocumentWhere | null }) =>
         documents.filter((document) => matches(document, args.where)),
       document: (_parent: unknown, args: { where?: DocumentWhere | null }) => {
@@ -341,8 +354,8 @@ export function documentServer(
         if (bucket === undefined) {
           throw new GraphQLError('No such bucket', { extensions: { code: 'NOT_FOUND' } });
         }
-        if (args.size > UPLOAD_LIMIT_BYTES) {
-          throw new GraphQLError(`${args.filename} is larger than the 100 MiB upload limit`, {
+        if (args.size > uploadLimit) {
+          throw new GraphQLError(`The file is larger than the ${describeUploadLimit(uploadLimit)} upload limit.`, {
             extensions: { code: 'BAD_USER_INPUT' },
           });
         }

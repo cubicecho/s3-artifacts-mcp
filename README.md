@@ -9,9 +9,9 @@ small, self-hosted store in between. It keeps the documents' metadata in
 Postgres, the bytes in buckets you configure, and gives each bucket its own MCP
 endpoint.
 
-> **Status: early.** This is step 3 of [the plan](.agents/plan.md): sign-in,
-> API keys, settings, buckets and documents. Everything marked *planned* below is
-> designed but not built yet.
+> **Status: early.** This is step 4 of [the plan](.agents/plan.md): sign-in,
+> API keys, settings, buckets, documents and share links. Everything marked
+> *planned* below is designed but not built yet.
 
 ## What it does
 
@@ -20,8 +20,8 @@ endpoint.
   tested in Settings. Any of them can receive uploads. There is
   no default bucket: every upload says which bucket it goes to.
 - **Upload**: from the app, a batch of files (a dropped folder uploads flat),
-  each with its own progress bar, up to 100 MiB each for now. From an agent
-  over MCP *(planned)*.
+  each with its own progress bar, up to the limit you set in Settings → General
+  (100 MiB to start, at most 50 GiB). From an agent over MCP *(planned)*.
 - **Scan a bucket** for the files already in it, put there by anything else:
   each becomes a document where it is, nothing moved or renamed. Scanning
   again adds only what is new. The access key needs permission to list the
@@ -31,8 +31,9 @@ endpoint.
   is never shown in the app, only downloaded.
 - **A tree of buckets** in the sidebar, each with its documents beneath, every
   bucket shut until you open it.
-- **Share links** *(planned)*: a link with a permission (view or download) and
-  an expiry, signed for the bucket itself. See [Share links](#share-links).
+- **Share links**: a link with a permission (view or download) and an expiry
+  you choose, from an hour to 7 days, signed for the bucket itself. Listed on
+  the document's page and in Settings → Share links. See [Share links](#share-links).
 - **Tags** *(planned)*: yours, to sort and filter documents. There are no
   folders.
 - **MCP per bucket** *(planned)*: each bucket is its own endpoint,
@@ -74,17 +75,27 @@ tool tells the agent to give you `shareLink.url` and its expiry.
 
 ## Share links
 
-A share link is a presigned URL on the bucket, not a link to this app *(planned)*.
+A share link is a presigned URL on the bucket, not a link to this app. Make one
+with **Share** on a document's page: pick what it lets the recipient do, how
+long it lasts, and an optional label, and the app shows the URL with a Copy
+button. It stays in the document's list (and in Settings → Share links), marked
+active, expired or revoked, where it can be copied again.
 The browser fetches straight from the bucket, so the app is not in the path and
 can be offline. That has consequences, and the UI states them:
 
-- **Expiry is capped at 7 days.** That is SigV4's maximum, on AWS, MinIO and
-  RustFS alike. You choose from 1 hour to 7 days, and there is no "never".
+- **You choose the expiry, and it is capped at 7 days.** Pick 1 hour, 1 day,
+  3 days or 7 days, or type any whole number of hours or days in between; the
+  dialog shows when the link will stop working before you make it. 7 days is
+  SigV4's maximum, on AWS, MinIO and RustFS alike, so there is no "never". The
+  default (24 hours) and the default permission are set in Settings → General.
 - **A single link cannot be revoked before it expires.** The bucket checks the
-  signature, not our database.
+  signature, not our database. "Remove from list" forgets the link here; the URL
+  keeps working until it expires.
 - **"Revoke all links" re-keys the document.** The object is copied to a new
-  key and the old one deleted, so every link to the old key answers 404.
-- **Rotating the bucket's access key** kills every link signed with it.
+  key and the old one deleted, so every link to the old key answers 404. A
+  file a scan found leaves the path you put it at for one the app makes.
+- **Rotating the bucket's access key** kills every link signed with it. The
+  bucket form says so when you change the key.
 - **"View" is not copy protection.** It only asks the browser to show the file
   inline instead of downloading it.
 - **The bucket must be reachable** at its public endpoint from wherever the
@@ -157,8 +168,8 @@ compose -f docker-compose.quickstart.yml up -d`. Migrations run at boot.
 | `DB_CONNECT_TIMEOUT_MS` | `60000` | How long boot waits for Postgres before giving up. |
 
 That is all of it. Sessions are always kept in Postgres, so a restart signs
-nobody out. OIDC is set up by pairing, below. Buckets are in Settings; upload
-size and link defaults will be too *(planned)*.
+nobody out. OIDC is set up by pairing, below. Buckets are in Settings, and so
+are the upload size limit and the share-link defaults (Settings → General).
 
 ### Signing in with an OIDC provider
 
@@ -197,7 +208,8 @@ container.
   reach every bucket you shared over MCP, and write to the writable ones.
   `SECURE_LOCAL_NET` never waives the key.
 - **A share link is a bearer URL.** Anyone who has it can open the file until it
-  expires.
+  expires, at most 7 days, or until you revoke all of the document's links. It
+  is stored encrypted, and shown only to you.
 
 ## Development
 

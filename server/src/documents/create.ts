@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { type Bucket, type Document, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { z } from 'zod';
+import { describeBytes, readAppSettings, uploadLimitOf } from '../app-settings/app-settings.ts';
 import { ownBucket } from '../buckets/resolvers.ts';
 import type { Context } from '../core/context.ts';
-import { DOCUMENT_DEFAULTS, UPLOAD_DEFAULTS } from '../core/defaults.ts';
+import { DOCUMENT_DEFAULTS } from '../core/defaults.ts';
 import { badInput, requireAuth } from '../core/errors.ts';
 import { SecretPurpose } from '../core/secrets.ts';
 import { parseOrThrow } from '../core/validation.ts';
-import { BYTES_PER_MEBIBYTE } from '../core/wire.ts';
 import { objectKeyFor } from './keys.ts';
 
 // How a document comes into being: a `pending_upload` row in a bucket the caller names, made before
@@ -61,7 +61,6 @@ const contentTypeSchema = z
  * @returns The schema.
  */
 function uploadSchema(maxBytes: number) {
-  const maxMebibytes = Math.floor(maxBytes / BYTES_PER_MEBIBYTE);
   return z.object({
     filename: filenameSchema,
     contentType: contentTypeSchema,
@@ -69,7 +68,7 @@ function uploadSchema(maxBytes: number) {
       .number()
       .int('The size must be a whole number of bytes.')
       .positive('The file is empty.')
-      .max(maxBytes, `The file is larger than the ${maxMebibytes} MiB upload limit.`),
+      .max(maxBytes, `The file is larger than the ${describeBytes(maxBytes)} upload limit.`),
   });
 }
 
@@ -119,13 +118,13 @@ export async function reachableBucket(ctx: Context, bucketId: string, doing: str
  * @param ctx - The request.
  * @param input - The bucket, filename, type and size, as sent.
  * @returns The row. Its bytes go to `PUT /api/documents/<id>/content`.
- * @throws BAD_USER_INPUT for a bad filename or type, an empty file, one over the cap, or a bucket whose secret
+ * @throws BAD_USER_INPUT for a bad filename or type, an empty file, one over the owner's upload limit, or a bucket whose secret
  *   is unreadable; NOT_FOUND for a bucket that is missing or someone else's.
  */
 export async function createPendingDocument(ctx: Context, input: DocumentUploadInput): Promise<Document> {
   const userId = requireAuth(ctx);
-  // Step 4 reads the cap from `app_settings.max_upload_bytes`, bounded by this one.
-  const { filename, contentType, size } = parseOrThrow(uploadSchema(UPLOAD_DEFAULTS.maxUploadBytes), input);
+  const limit = uploadLimitOf(await readAppSettings(ctx.db, userId));
+  const { filename, contentType, size } = parseOrThrow(uploadSchema(limit), input);
   const bucket = await reachableBucket(ctx, input.bucketId, 'uploaded to');
   const id = randomUUID();
   const [row] = await ctx.db

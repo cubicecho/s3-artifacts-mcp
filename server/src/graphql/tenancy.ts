@@ -14,10 +14,11 @@ import { requireAuth } from '../core/errors.ts';
 type AnyTable = any;
 
 /**
- * The tables whose rows carry the owner's id and are scoped by it. The tags and share links each
- * add theirs here with their model.
+ * The tables whose rows carry the owner's id and are scoped by it. The tags add theirs here with
+ * their model. `appSettings` is one row per account, keyed by its `user_id`, so it is scoped like
+ * any other: there is no instance-wide row to read without asking whose it is.
  */
-export const USER_OWNED_TABLES = ['buckets', 'documents'] as const;
+export const USER_OWNED_TABLES = ['appSettings', 'buckets', 'documents', 'shareLinks'] as const;
 
 /** Every table with a scope entry: the ones drizzle-graphql generates fields for. */
 export const ALL_TABLES = ['users', ...USER_OWNED_TABLES] as const;
@@ -29,8 +30,10 @@ export const ALL_TABLES = ['users', ...USER_OWNED_TABLES] as const;
 export const scope: NonNullable<BuildSchemaConfig['scope']> = {
   // A user row is only ever visible to its owner. There is no directory here.
   users: (context, table) => eq((table as AnyTable).id, requireAuth(context)),
+  appSettings: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
   buckets: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
   documents: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
+  shareLinks: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
 };
 
 /**
@@ -38,8 +41,10 @@ export const scope: NonNullable<BuildSchemaConfig['scope']> = {
  * generated writes today; this is kept so turning one on cannot forget it.
  */
 export const contextValues: NonNullable<BuildSchemaConfig['contextValues']> = {
+  appSettings: { userId: (context) => requireAuth(context) },
   buckets: { userId: (context) => requireAuth(context) },
   documents: { userId: (context) => requireAuth(context) },
+  shareLinks: { userId: (context) => requireAuth(context) },
 };
 
 /**

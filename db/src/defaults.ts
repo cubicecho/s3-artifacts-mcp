@@ -22,3 +22,20 @@ export const DATABASE_DEFAULTS: Readonly<DatabaseSettings> = Object.freeze({
   retryBackoffFactor: 2,
   closeTimeoutSeconds: 5,
 });
+
+/** What a new instance's settings start as: the `app_settings` row the owner changes in Settings → General. */
+export interface AppSettingsSettings {
+  /** The largest file an upload may declare, in bytes. The server bounds it by `UPLOAD_DEFAULTS.maxUploadBytes`. */
+  maxUploadBytes: number;
+  /** How long a share link works when its maker names no expiry, in hours. */
+  defaultLinkExpiryHours: number;
+  /** What a share link lets its holder do when its maker names nothing. */
+  defaultLinkPermission: 'view' | 'download';
+}
+
+/** The shipped values of `AppSettingsSettings`: the columns' defaults. */
+export const APP_SETTINGS_DEFAULTS: Readonly<AppSettingsSettings> = Object.freeze({
+  maxUploadBytes: 104_857_600,
+  defaultLinkExpiryHours: 24,
+  defaultLinkPermission: 'download',
+});

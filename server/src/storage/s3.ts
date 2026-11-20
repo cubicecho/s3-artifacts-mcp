@@ -1,6 +1,9 @@
 import { Readable } from 'node:stream';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
@@ -10,10 +13,11 @@ import {
   NotFound,
   PutObjectCommand,
   S3Client,
+  UploadPartCopyCommand,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { UPLOAD_DEFAULTS } from '../core/defaults.ts';
+import { COPY_DEFAULTS, type CopySettings, UPLOAD_DEFAULTS } from '../core/defaults.ts';
 import { type BucketConnection, contentDisposition, httpStatus, type Storage } from './storage.ts';
 
 // One bucket on any S3-compatible service. Everything a client needs comes from the bucket's own
@@ -74,11 +78,34 @@ function isMissingObject(error: unknown): boolean {
   return error instanceof Error && httpStatus(error) === HTTP_NOT_FOUND;
 }
 
+/** One part of a copy in parts: its number, from 1, and its bytes as a `CopySourceRange`. */
+interface CopyPart {
+  partNumber: number;
+  range: string;
+}
+
+/**
+ * Splits an object into the parts a copy in parts sends.
+ *
+ * @param size - The object's length in bytes.
+ * @param partSize - Each part's length in bytes; the last may be shorter.
+ * @returns The parts, in order.
+ */
+function copyParts(size: number, partSize: number): CopyPart[] {
+  const parts: CopyPart[] = [];
+  for (let first = 0; first < size; first += partSize) {
+    const last = Math.min(first + partSize, size) - 1;
+    parts.push({ partNumber: parts.length + 1, range: `bytes=${first}-${last}` });
+  }
+  return parts;
+}
+
 /**
  * Builds the storage for one bucket, over two clients.
  *
  * @param bucket - The bucket's row, or a form being tested: endpoints, region, bucket, access key and path style.
  * @param secretAccessKey - The access key's secret, already decrypted.
+ * @param [copyOverrides] - Copy settings that differ from `COPY_DEFAULTS`, so a test can copy in parts.
  * @returns The bucket's storage.
  *
  * @remarks
@@ -86,11 +113,62 @@ function isMissingObject(error: unknown): boolean {
  * covers the host and a URL cannot be rewritten after signing. Signing makes no request, so that
  * client never has to reach its endpoint; it only has to be the host a browser will.
  */
-export function createS3Storage(bucket: BucketConnection, secretAccessKey: string): Storage {
+export function createS3Storage(
+  bucket: BucketConnection,
+  secretAccessKey: string,
+  copyOverrides: Partial<CopySettings> = {},
+): Storage {
+  const { maxSingleCopyBytes, copyPartSizeBytes, copyPartQueueSize } = { ...COPY_DEFAULTS, ...copyOverrides };
   const client = createClient(bucket.endpoint, bucket, secretAccessKey);
   const publicEndpoint = bucket.publicEndpoint ?? bucket.endpoint;
   const signer = publicEndpoint === bucket.endpoint ? client : createClient(publicEndpoint, bucket, secretAccessKey);
   const Bucket = bucket.bucket;
+
+  /**
+   * Copies an object past CopyObject's limit as a multipart upload of `UploadPartCopy` parts, a few at a time.
+   *
+   * @param CopySource - The source, as `bucket/key`, encoded.
+   * @param toKey - Where the copy goes.
+   * @param size - The source's length in bytes.
+   * @param contentType - The source's type, which a multipart upload does not copy by itself.
+   */
+  const copyInParts = async (
+    CopySource: string,
+    toKey: string,
+    size: number,
+    contentType: string | null,
+  ): Promise<void> => {
+    const { UploadId } = await client.send(
+      new CreateMultipartUploadCommand({ Bucket, Key: toKey, ContentType: contentType ?? undefined }),
+    );
+    try {
+      const pending = copyParts(size, copyPartSizeBytes);
+      const done: { PartNumber: number; ETag: string | undefined }[] = [];
+      const worker = async (): Promise<void> => {
+        for (let part = pending.shift(); part !== undefined; part = pending.shift()) {
+          const { CopyPartResult } = await client.send(
+            new UploadPartCopyCommand({
+              Bucket,
+              Key: toKey,
+              UploadId,
+              PartNumber: part.partNumber,
+              CopySource,
+              CopySourceRange: part.range,
+            }),
+          );
+          done.push({ PartNumber: part.partNumber, ETag: CopyPartResult?.ETag });
+        }
+      };
+      await Promise.all(Array.from({ length: copyPartQueueSize }, worker));
+      const Parts = done.sort((a, b) => a.PartNumber - b.PartNumber);
+      await client.send(
+        new CompleteMultipartUploadCommand({ Bucket, Key: toKey, UploadId, MultipartUpload: { Parts } }),
+      );
+    } catch (error) {
+      await client.send(new AbortMultipartUploadCommand({ Bucket, Key: toKey, UploadId })).catch(() => undefined);
+      throw error;
+    }
+  };
 
   return {
     async headBucket() {
@@ -163,6 +241,12 @@ export function createS3Storage(bucket: BucketConnection, secretAccessKey: strin
 
     async copy(fromKey, toKey) {
       const CopySource = `${Bucket}/${fromKey.split('/').map(encodeURIComponent).join('/')}`;
+      const source = await client.send(new HeadObjectCommand({ Bucket, Key: fromKey }));
+      const size = source.ContentLength ?? 0;
+      if (size > maxSingleCopyBytes) {
+        await copyInParts(CopySource, toKey, size, source.ContentType ?? null);
+        return;
+      }
       await client.send(new CopyObjectCommand({ Bucket, Key: toKey, CopySource }));
     },
 

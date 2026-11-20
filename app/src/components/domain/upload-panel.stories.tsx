@@ -221,21 +221,38 @@ export const Succeeded: Story = {
 };
 
 const capped = withServer([MINIO_BUCKET]);
-/** A file over the server's limit is refused on its own row; the rest of the batch still goes. */
+/**
+ * A file over the owner's limit, as the server states it, is refused on its own row before the server is asked;
+ * the rest of the batch still goes. The drop zone says what the limit is.
+ */
 export const CapExceeded: Story = {
   ...capped.story,
-  play: async ({ canvasElement }) => {
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByText(/Up to 100 MiB a file/)).toBeInTheDocument();
     await userEvent.upload(fileInput(canvasElement), [
       hugeFile('recording.mp4', UPLOAD_LIMIT_BYTES + 1),
       file('a.pdf'),
     ]);
     const huge = await jobRow(canvasElement, 'recording.mp4');
     await waitFor(() => expect(huge.getByText('Failed')).toBeInTheDocument());
-    await expect(huge.getByText(/larger than the 100 MiB upload limit/)).toBeInTheDocument();
+    await expect(huge.getByText('Larger than the 100 MiB upload limit')).toBeInTheDocument();
     const small = await jobRow(canvasElement, 'a.pdf');
     await waitFor(() => expect(small.getByText('Uploaded')).toBeInTheDocument());
-    // Refused before any bytes were sent.
+    // Refused before the server was asked to make a document, let alone sent any bytes.
+    await expect(capped.server.calls.createDocumentUpload.map((call) => call.filename)).toEqual(['a.pdf']);
     await expect(capped.server.calls.sends).toEqual(['a.pdf']);
+  },
+};
+
+const raised = withServer([MINIO_BUCKET], { uploadLimitBytes: 53_687_091_200 });
+/** The limit is the owner's, read from the server: raised to 50 GiB, a 200 MiB file goes. */
+export const RaisedLimit: Story = {
+  ...raised.story,
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByText(/Up to 50 GiB a file/)).toBeInTheDocument();
+    await userEvent.upload(fileInput(canvasElement), [hugeFile('recording.mp4', 2 * UPLOAD_LIMIT_BYTES)]);
+    const row = await jobRow(canvasElement, 'recording.mp4');
+    await waitFor(() => expect(row.getByText('Uploaded')).toBeInTheDocument());
   },
 };
 
