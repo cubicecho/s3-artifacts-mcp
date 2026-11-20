@@ -7,7 +7,7 @@
 #   RUSTFS_PASSWORD     openssl rand -hex 24
 #
 # Optional: POSTGRES_PASSWORD, APP_URL, PORT (3005), RUSTFS_PORT (9000),
-# RUSTFS_CONSOLE_PORT (9001), SECURE_LOCAL_NET, TRUST_PROXY.
+# RUSTFS_CONSOLE_PORT (9001), SECURE_LOCAL_NET, EXPOSE_MAGIC_LINK, TRUST_PROXY.
 #
 # The app reads no bucket from the environment. Once you are signed in, add the
 # RustFS bucket in Settings → Buckets:
@@ -39,6 +39,7 @@ services:
       # Empty: links and the OIDC redirect URI use the address the browser came in on.
       APP_URL: ${APP_URL:-}
       SECURE_LOCAL_NET: ${SECURE_LOCAL_NET:-false}
+      EXPOSE_MAGIC_LINK: ${EXPOSE_MAGIC_LINK:-false}
       TRUST_PROXY: ${TRUST_PROXY:-false}
       NODE_ENV: production
       PORT: 3005

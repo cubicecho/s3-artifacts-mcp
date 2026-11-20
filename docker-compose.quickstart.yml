@@ -23,6 +23,12 @@
 #
 #   S3AM_PORT=3005  RUSTFS_PORT=9000  RUSTFS_CONSOLE_PORT=9001
 #
+# Also optional:
+#
+#   S3AM_VERSION       The image tag to run, e.g. 1.3.0. Default: latest.
+#   APP_URL            Behind a reverse proxy, the address people use, e.g.
+#                      https://docs.example.com. Default: http://S3AM_HOST:S3AM_PORT.
+#
 # After it starts.
 # Open http://S3AM_HOST:3005. The first account to sign in owns the instance,
 # and every other address is refused after that. The app sends no mail: the
@@ -35,7 +41,7 @@
 #
 # Or sign in through an OpenID Connect provider such as heautou: make a setup
 # URL for this app there and paste it into the login page's "Set up sign-in"
-# tab before anyone has an account (or, later, Settings → Sign-in, as the
+# tab before anyone has an account (or, later, Settings → Auth, as the
 # owner).
 #
 # Then add the bucket. The app reads no bucket from the environment; it is
@@ -55,6 +61,13 @@
 # other S3, MinIO or RustFS bucket can be added the same way; if you will not
 # use this RustFS, remove the `rustfs` and `rustfs-init` services.
 #
+# Then connect an agent. Make a key in Settings → API keys, turn the bucket on
+# in Settings → MCP (and make it writable, so the agent can upload), and run the
+# `claude mcp add` command shown under it. The endpoint is
+# http://S3AM_HOST:3005/mcp/b/artifacts. An agent that uploads a file from its
+# disk PUTs it straight to the public endpoint above, so the agent's machine
+# has to reach that address too.
+#
 # Keep this on a network you trust, or put a reverse proxy in front of it. Read
 # the "Before you expose it" section of the README before giving it a domain.
 
@@ -62,7 +75,7 @@ name: s3-artifacts-mcp
 
 services:
   s3-artifacts-mcp:
-    image: ghcr.io/cubicecho/s3-artifacts-mcp:latest
+    image: ghcr.io/cubicecho/s3-artifacts-mcp:${S3AM_VERSION:-latest}
     container_name: s3-artifacts-mcp
     restart: unless-stopped
     depends_on:
@@ -74,7 +87,7 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET — openssl rand -hex 32}
       DATABASE_URL: postgres://s3am:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/s3am
       # The address sign-in links are built from.
-      APP_URL: http://${S3AM_HOST:?set S3AM_HOST to this machine's hostname or LAN IP}:${S3AM_PORT:-3005}
+      APP_URL: ${APP_URL:-http://${S3AM_HOST:?set S3AM_HOST to this machine's hostname or LAN IP}:${S3AM_PORT:-3005}}
       # On a LAN you control, set SECURE_LOCAL_NET=true and entering an address
       # signs you in — no link to dig out of the log. It makes that address the
       # entire credential, so it is wrong the moment this port is reachable from
@@ -82,6 +95,9 @@ services:
       SECURE_LOCAL_NET: ${SECURE_LOCAL_NET:-false}
       # Behind a reverse proxy, the number of proxies in front (usually 1).
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      # "true" returns the sign-in link to the login page instead of only the
+      # log. Like SECURE_LOCAL_NET, for a network you control.
+      EXPOSE_MAGIC_LINK: ${EXPOSE_MAGIC_LINK:-false}
       TZ: ${TZ:-UTC}
       NODE_ENV: production
     ports:

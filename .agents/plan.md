@@ -453,9 +453,17 @@ Each step is one or more Conventional Commits, and each ends green.
 6. **Tags.** *(Done.)*
    - The models, the mutations, `/tags`, the picker, list filters, bulk tagging, `tag_document`, and `tags` on the upload tools.
    - The acceptance test uploads with `tags` and lists by them.
-7. **Ship.**
+7. **Ship.** *(Done.)*
    - Dockerfile, `docker-compose.dev.yml` (Postgres and RustFS; no CORS setting needed, `RUSTFS_OBS_LOG_DIRECTORY` emptied as in Engrafo), `docker-compose.quickstart.yml` (pulls `ghcr.io/cubicecho/s3-artifacts-mcp:latest`), CI (check, postgres, boot, the RustFS integration job), release to GHCR only.
    - README and AGENTS.md.
+   - Decisions made while shipping:
+     - **The integration job uses the dev compose's RustFS**, not a service container: `up -d rustfs` before `npm ci`, then `run --rm rustfs-init` for the bucket, so CI tests against what `npm run db:up` gives a developer, with the same credentials and log setting. It runs `npm run test:integration` (`vitest run --project node .integration.test.ts`).
+     - **The job fails when anything skipped.** The suites skip themselves without `S3AM_IT_ENDPOINT`, and a skipped suite passes, so the job reads Vitest's JSON report and requires every `*.integration.test.ts` file in git to have run, with every test passed and none skipped or todo. No test reads a "required" flag; the count catches a missing variable, a renamed file and a stray `.skip` alike.
+     - **The runtime image installs with `--omit=optional` as well as `--omit=dev`.** better-auth's and drizzle-orm's optional peers made npm keep vitest, vite, drizzle-kit, Playwright, PGlite and jsdom as `devOptional`: 818 MB on disk before, 513 MB after (164 MB to 101 MB compressed). The only optional-only packages are build tools' platform binaries.
+     - **The quickstart takes `S3AM_VERSION`** (default `latest`), to pin a release and to run a local build, and `APP_URL` (default `http://S3AM_HOST:S3AM_PORT`, by nested interpolation), so an instance behind a reverse proxy can say its real address without editing the file.
+     - **`EXPOSE_MAGIC_LINK`**, kept from Engrafo in `core/config.ts` and `.env.example`, is now in the README's table and both compose files (default `false`), as AGENTS.md asks of every env var.
+     - **The README's quickstart is the compose file's steps**, end to end: the four required variables (it had listed two), sign-in from the log, the bucket's fields (with Name `artifacts`, which gives the endpoint its slug), the key, the MCP switches, `claude mcp add` and asking for a link. "Where share links and uploads go" states the public-endpoint rules, and "Limits" gathers the S3-imposed ones. The recovery SQL was run against a quickstart stack.
+     - `release.yml` quotes `$GITHUB_OUTPUT` (actionlint's shellcheck). Its shape is otherwise unchanged.
 
 ## Later (not v1)
 
