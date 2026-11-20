@@ -1,3 +1,13 @@
+# [1.5.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.4.0...v1.5.0) (2026-11-20)
+
+### Bug Fixes
+
+* **docker:** leave the dev tools out of the runtime image ([933e24a](https://github.com/cubicecho/s3-artifacts-mcp/commit/933e24a90a5bb19d647d4c9156fd61eecf561e71))
+
+### Features
+
+* **compose:** pin the quickstart's image and name its address behind a proxy ([a0a2741](https://github.com/cubicecho/s3-artifacts-mcp/commit/a0a2741b5cb7b98f098bc13411406b6a797907bf))
+
 # [1.4.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.3.0...v1.4.0) (2026-11-20)
 
 ### Bug Fixes
