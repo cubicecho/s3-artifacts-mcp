@@ -1,4 +1,5 @@
-import { DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { APP_SETTINGS_DEFAULTS } from '@cubicecho/s3-artifacts-mcp-db/defaults';
+import { appSettings, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DOCUMENT_DEFAULTS, UPLOAD_DEFAULTS } from '../../core/defaults.ts';
@@ -100,16 +101,16 @@ describe('document resolvers', () => {
       expect(document.contentType).toBe(DEFAULT_CONTENT_TYPE);
     });
 
-    it('carries a size past 2 GiB as far as the cap, where an Int would fail to parse', async () => {
+    it('carries a size past 2 GiB as far as the limit, where an Int would fail to parse', async () => {
       const { code, message } = await client().expectError(CREATE, { bucketId, filename: 'big.iso', size: THREE_GIB });
       expect(code).toBe(ErrorCode.BadUserInput);
-      expect(message).toMatch(/MiB upload limit/);
+      expect(message).toBe('The file is larger than the 100 MiB upload limit.');
     });
 
     it.each([
       ['an empty file', { size: 0 }],
       ['a fractional size', { size: 1.5 }],
-      ['a file over the upload cap', { size: UPLOAD_DEFAULTS.maxUploadBytes + 1 }],
+      ['a file over the upload limit', { size: APP_SETTINGS_DEFAULTS.maxUploadBytes + 1 }],
       ['an empty filename', { filename: '   ' }],
       ['a filename that is too long', { filename: 'x'.repeat(DOCUMENT_DEFAULTS.filenameMaxLength + 1) }],
       ['a filename with a control character', { filename: 'a\nb.txt' }],
@@ -126,9 +127,34 @@ describe('document resolvers', () => {
       expect((await client().expectOk(LIST)).documents).toEqual([]);
     });
 
-    it('accepts exactly the cap', async () => {
-      const { document } = await start({ size: UPLOAD_DEFAULTS.maxUploadBytes });
-      expect(document.size).toBe(UPLOAD_DEFAULTS.maxUploadBytes);
+    it('accepts exactly the upload limit', async () => {
+      const { document } = await start({ size: APP_SETTINGS_DEFAULTS.maxUploadBytes });
+      expect(document.size).toBe(APP_SETTINGS_DEFAULTS.maxUploadBytes);
+    });
+
+    it('reads the limit from the owner’s settings, as raised or lowered there', async () => {
+      await db
+        .update(appSettings)
+        .set({ maxUploadBytes: THREE_GIB + 1 })
+        .where(eq(appSettings.userId, owner));
+      const { document } = await start({ filename: 'big.iso', size: THREE_GIB });
+      expect(document.size).toBe(THREE_GIB);
+
+      await db.update(appSettings).set({ maxUploadBytes: 1_048_576 }).where(eq(appSettings.userId, owner));
+      const { code, message } = await client().expectError(CREATE, { bucketId, filename: 'a.bin', size: 1_048_577 });
+      expect(code).toBe(ErrorCode.BadUserInput);
+      expect(message).toBe('The file is larger than the 1 MiB upload limit.');
+    });
+
+    it('never goes past the bound in UPLOAD_DEFAULTS, whatever the row says', async () => {
+      const past = UPLOAD_DEFAULTS.maxUploadBytes * 2;
+      await db.update(appSettings).set({ maxUploadBytes: past }).where(eq(appSettings.userId, owner));
+      const { message } = await client().expectError(CREATE, {
+        bucketId,
+        filename: 'huge.iso',
+        size: UPLOAD_DEFAULTS.maxUploadBytes + 1,
+      });
+      expect(message).toBe('The file is larger than the 50 GiB upload limit.');
     });
 
     it('answers NOT_FOUND for someone else’s bucket and a missing one alike', async () => {

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { request as httpRequest, type Server } from 'node:http';
-import { type Document, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { appSettings, type Document, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fixedAuthHost } from '../../auth/auth-host.ts';
@@ -185,6 +185,19 @@ describe('document content routes', () => {
   }
 
   describe('PUT', () => {
+    it('refuses a file over the upload limit as it stands now, and drops the pending row', async () => {
+      // Started under a larger limit, which the owner has lowered since.
+      const document = await pending({ size: 2_097_152 });
+      await db.update(appSettings).set({ maxUploadBytes: 1_048_576 }).where(eq(appSettings.userId, owner));
+      const response = await put(document.id, Buffer.alloc(document.size));
+      expect(response.status).toBe(HttpStatus.PayloadTooLarge);
+      expect(await response.json()).toEqual({
+        error: { code: ErrorCode.BadUserInput, message: 'The file is larger than the 1 MiB upload limit.' },
+      });
+      expect(await reread(document.id)).toBeUndefined();
+      expect(bucket.objects.has(document.objectKey)).toBe(false);
+    });
+
     it('stores exactly the declared bytes and makes the document ready with their SHA-256', async () => {
       const document = await pending();
       const response = await put(document.id, chunked(BINARY));

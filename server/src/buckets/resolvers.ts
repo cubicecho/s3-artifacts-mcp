@@ -1,5 +1,5 @@
 import { type Bucket, buckets, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
-import { resolveSelection, singularizeMapper } from '@vantreeseba/drizzle-graphql';
+import { resolveSelection } from '@vantreeseba/drizzle-graphql';
 import { and, count, eq, ne } from 'drizzle-orm';
 import { assertObjectType, extendSchema, type GraphQLResolveInfo, type GraphQLSchema } from 'graphql';
 import { z } from 'zod';
@@ -7,6 +7,7 @@ import type { Context } from '../core/context.ts';
 import { badInput, conflict, ErrorCode, notFound, requireAuth, withCode } from '../core/errors.ts';
 import { SecretPurpose, SecretUnreadableError } from '../core/secrets.ts';
 import { parseOrThrow } from '../core/validation.ts';
+import { typeNames } from '../graphql/naming.ts';
 import { parentIdOf } from '../graphql/parent-id.ts';
 import type { BucketConnection } from '../storage/storage.ts';
 import {
@@ -90,7 +91,7 @@ function selectBucket(ctx: Context, info: GraphQLResolveInfo, id: string): Promi
     db: ctx.db,
     table: BUCKETS_TABLE,
     context: ctx,
-    typeNameMapper: singularizeMapper,
+    typeNameMapper: typeNames,
     where: { id: { eq: id } },
     single: true,
   });

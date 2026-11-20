@@ -17,7 +17,8 @@ import { RouteError, sendRouteError } from './route-error.ts';
 // elements that cannot send a header. There are no CORS headers: same origin only.
 //
 // No body parser runs on these routes, so the upload's body reaches its handler as the raw stream,
-// whatever its size; the size cap is the one `createDocumentUpload` checked.
+// whatever its size. The size is the one `createDocumentUpload` checked against the owner's upload
+// limit, which the PUT checks again, and the meter holds the body to it.
 
 /** Everything under here is the REST API. A path nobody mounted answers JSON, not the app. */
 const API_PREFIX = '/api';

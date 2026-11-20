@@ -4,6 +4,7 @@ import type { DB } from '@cubicecho/s3-artifacts-mcp-db';
 import { type Document, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { and, eq } from 'drizzle-orm';
 import type { Request, Response } from 'express';
+import { describeBytes, readAppSettings, uploadLimitOf } from '../app-settings/app-settings.ts';
 import { ErrorCode, errorMessage } from '../core/errors.ts';
 import { HttpStatus } from '../core/wire.ts';
 import { RouteError, sendRouteError } from '../http/route-error.ts';
@@ -191,6 +192,18 @@ export function createUploadHandler({ db, storage: registry }: UploadRouteDeps) 
     if (document.status === DocumentStatus.Ready) {
       const refusal = 'The document has its bytes already. Start a new upload to send another file.';
       sendRouteError(res, new RouteError(HttpStatus.Conflict, ErrorCode.Conflict, refusal), CLOSE_CONNECTION);
+      return;
+    }
+    // The limit may have been lowered since the upload started; it is the owner's to say.
+    const limit = uploadLimitOf(await readAppSettings(db, userId));
+    if (document.size > limit) {
+      await deletePendingRow(db, document.id);
+      const refusal = `The file is larger than the ${describeBytes(limit)} upload limit.`;
+      sendRouteError(
+        res,
+        new RouteError(HttpStatus.PayloadTooLarge, ErrorCode.BadUserInput, refusal),
+        CLOSE_CONNECTION,
+      );
       return;
     }
     if (inFlight.has(document.id)) {

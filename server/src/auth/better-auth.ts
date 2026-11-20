@@ -5,6 +5,7 @@ import { accounts, apikeys, sessions, users, verifications } from '@cubicecho/s3
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { bearer, genericOAuth, magicLink, oneTimeToken } from 'better-auth/plugins';
+import { ensureAppSettings } from '../app-settings/app-settings.ts';
 import { appUrl, authSecret, configuredAppUrl, OIDC_PROVIDER_ID, type OidcConfig } from '../core/config.ts';
 import { API_KEY_DEFAULTS, AUTH_DEFAULTS } from '../core/defaults.ts';
 import { SECONDS_PER_MINUTE } from '../core/wire.ts';
@@ -124,6 +125,9 @@ export function createAuth(
         create: {
           before: async () => {
             await refuseSecondUser(db);
+          },
+          after: async (user) => {
+            await ensureAppSettings(db, user.id);
           },
         },
       },

@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 
-// Credentials the server has to read back (a bucket's secret key, later a share link's URL) are
+// Credentials the server has to read back (a bucket's secret key, a share link's URL) are
 // sealed with AES-256-GCM before they reach the database. The key is derived from
 // `BETTER_AUTH_SECRET` by HKDF, so there is no second secret to keep, and rotating that one makes
 // everything sealed with it unreadable: `open` then throws `SecretUnreadableError`, which the
@@ -12,6 +12,8 @@ import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, ti
 /** What a sealed value is for. It is bound into the ciphertext, so one cannot be opened as another. */
 export const SecretPurpose = {
   BucketSecret: 'bucket-secret',
+  /** A share link's presigned URL, which reads the file for anyone who holds it. */
+  ShareLinkUrl: 'share-link-url',
 } as const;
 /** One of the purposes in `SecretPurpose`. */
 export type SecretPurpose = (typeof SecretPurpose)[keyof typeof SecretPurpose];

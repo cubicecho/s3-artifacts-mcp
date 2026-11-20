@@ -1,21 +1,23 @@
-import { type Document, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
-import { resolveSelection, singularizeMapper } from '@vantreeseba/drizzle-graphql';
+import { documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { resolveSelection } from '@vantreeseba/drizzle-graphql';
 import { and, eq } from 'drizzle-orm';
 import { assertObjectType, extendSchema, type GraphQLResolveInfo, type GraphQLSchema } from 'graphql';
 import type { Context } from '../core/context.ts';
-import { badInput, ErrorCode, errorMessage, notFound, requireAuth, withCode } from '../core/errors.ts';
-import { SecretUnreadableError } from '../core/secrets.ts';
+import { ErrorCode, errorMessage, withCode } from '../core/errors.ts';
 import { parseOrThrow } from '../core/validation.ts';
+import { typeNames } from '../graphql/naming.ts';
 import { parentIdOf } from '../graphql/parent-id.ts';
-import { describeStorageError, type Storage } from '../storage/storage.ts';
-import { SECRET_UNREADABLE_MESSAGE } from './bucket-storage.ts';
+import { describeStorageError } from '../storage/storage.ts';
+import { bucketStorageFor } from './bucket-storage.ts';
 import { contentPath, signedContentUrl } from './content-url.ts';
 import { createPendingDocument, type DocumentUploadInput, titleSchema } from './create.ts';
-import { DOCUMENT_NOT_FOUND, findOwnedDocument } from './rows.ts';
+import { rekeyDocument } from './rekey.ts';
+import { ownDocument } from './rows.ts';
 import { scanBucket } from './scan.ts';
 import { DOCUMENTS_SDL } from './sdl.ts';
 
-// The owner's documents: starting an upload, scanning a bucket for files already in it, renaming and deleting. Reads are the generated
+// The owner's documents: starting an upload, scanning a bucket for files already in it, renaming, deleting, and
+// re-keying to revoke its share links (rekey.ts). Reads are the generated
 // `documents` / `document` fields, scoped by owner in tenancy.ts. The bytes travel through the
 // content routes (upload.ts, download.ts), never through GraphQL.
 
@@ -26,22 +28,6 @@ const DOCUMENTS_TABLE = 'documents';
 interface DocumentUploadResult {
   documentId: string;
   uploadPath: string;
-}
-
-/**
- * Loads one of the caller's documents.
- *
- * @param ctx - The request.
- * @param id - The document's id, as sent.
- * @returns The row.
- * @throws NOT_FOUND when it is malformed, missing or not the caller's.
- */
-async function ownDocument(ctx: Context, id: string): Promise<Document> {
-  const row = await findOwnedDocument(ctx.db, requireAuth(ctx), id);
-  if (row === null) {
-    throw notFound(DOCUMENT_NOT_FOUND);
-  }
-  return row;
 }
 
 /**
@@ -57,29 +43,10 @@ function selectDocument(ctx: Context, info: GraphQLResolveInfo, id: string): Pro
     db: ctx.db,
     table: DOCUMENTS_TABLE,
     context: ctx,
-    typeNameMapper: singularizeMapper,
+    typeNameMapper: typeNames,
     where: { id: { eq: id } },
     single: true,
   });
-}
-
-/**
- * The storage a document's bytes are in.
- *
- * @param ctx - The request.
- * @param document - The document.
- * @returns Its bucket's storage.
- * @throws BAD_USER_INPUT when the bucket's secret no longer decrypts.
- */
-async function documentStorage(ctx: Context, document: Document): Promise<Storage> {
-  try {
-    return await ctx.storage.get(document.bucketId);
-  } catch (error) {
-    if (error instanceof SecretUnreadableError) {
-      throw badInput(SECRET_UNREADABLE_MESSAGE);
-    }
-    throw error;
-  }
 }
 
 /**
@@ -137,7 +104,7 @@ export function applyDocumentsExtension(schema: GraphQLSchema): GraphQLSchema {
 
   mutations.deleteDocument.resolve = async (_parent: unknown, args: { id: string }, context: Context) => {
     const row = await ownDocument(context, args.id);
-    const storage = await documentStorage(context, row);
+    const storage = await bucketStorageFor(context, row.bucketId);
     try {
       // Deleting a key with nothing at it succeeds, so a document whose object is already gone goes quietly.
       await storage.delete([row.objectKey]);
@@ -156,6 +123,13 @@ export function applyDocumentsExtension(schema: GraphQLSchema): GraphQLSchema {
 
   mutations.scanBucket.resolve = (_parent: unknown, args: { id: string }, context: Context) =>
     scanBucket(context, args.id);
+
+  mutations.rekeyDocument.resolve = async (
+    _parent: unknown,
+    args: { id: string },
+    context: Context,
+    info: GraphQLResolveInfo,
+  ) => selectDocument(context, info, (await rekeyDocument(context, args.id)).id);
 
   return extended;
 }

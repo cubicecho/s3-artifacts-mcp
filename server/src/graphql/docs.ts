@@ -9,6 +9,9 @@ const TABLE_DOCS: Readonly<Record<string, string>> = Object.freeze({
   buckets:
     'A bucket on an S3-compatible service, with its own endpoint, region and credentials. Its secret is never returned.',
   documents: 'A file uploaded through the app into one of the owner’s buckets.',
+  shareLinks:
+    'A presigned URL for a document, signed on its bucket’s public endpoint. It works until it expires or the document is re-keyed, whatever this list says.',
+  appSettings: 'What the owner set in Settings → General. Each value is checked against `appSettingsLimits`.',
 });
 
 /** What each generated column field holds. */
@@ -38,6 +41,19 @@ const COLUMN_DOCS: Readonly<Record<string, Readonly<Record<string, string>>>> = 
     sha256:
       'The SHA-256 of the bytes, in hex. Null until the upload has finished, and for a scanned file, whose bytes were never read.',
     status: '`pending_upload` while its bytes are on their way, `ready` once they are in the bucket.',
+  }),
+  shareLinks: Object.freeze({
+    documentId: 'The document the link opens.',
+    label: 'What the owner called the link, to tell it apart. Null for none.',
+    permission: '`view` asks the browser to show the file, `download` to save it. Neither stops a copy being kept.',
+    objectKey: 'The key the link was signed for. Once the document’s own key differs, the link is revoked.',
+    expiresAt: 'When the bucket stops accepting the link: at most 7 days after it was made.',
+    createdBy: '`owner` for a link made in the app, `mcp` for one an MCP client made.',
+  }),
+  appSettings: Object.freeze({
+    maxUploadBytes: 'The largest file an upload may declare, in bytes.',
+    defaultLinkExpiryHours: 'How long a new share link lasts when its maker names no expiry, in hours.',
+    defaultLinkPermission: 'What a new share link lets its holder do when its maker names nothing.',
   }),
 });
 

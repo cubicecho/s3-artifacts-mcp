@@ -20,7 +20,7 @@ const tableKeys = Object.entries(dbSchema)
 
 describe('tenancy configuration', () => {
   it('finds the tables', () => {
-    expect(tableKeys.sort()).toEqual(['buckets', 'documents', 'users']);
+    expect(tableKeys.sort()).toEqual(['appSettings', 'buckets', 'documents', 'shareLinks', 'users']);
   });
 
   it.each(tableKeys)('scopes %s to the caller', (key) => {
@@ -50,6 +50,7 @@ describe('tenancy at runtime', () => {
 
   let bobBucket: string;
   let bobDocument: string;
+  let bobLink: string;
 
   beforeAll(async () => {
     db = await createTestDb();
@@ -84,6 +85,19 @@ describe('tenancy at runtime', () => {
       })
       .returning({ id: dbSchema.documents.id });
     bobDocument = document.id;
+    const [link] = await db
+      .insert(dbSchema.shareLinks)
+      .values({
+        userId: bob,
+        documentId: bobDocument,
+        permission: 'download',
+        urlEnc: 'v1.sealed',
+        objectKey: 'notes',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        createdBy: 'owner',
+      })
+      .returning({ id: dbSchema.shareLinks.id });
+    bobLink = link.id;
   });
 
   afterAll(() => closeTestDb(db));
@@ -125,6 +139,48 @@ describe('tenancy at runtime', () => {
     expect(byBucket.documents).toEqual([]);
     const asBob = await createClient(db, bob).expectOk('{ documents { id bucket { id } } }');
     expect(asBob.documents).toEqual([{ id: bobDocument, bucket: { id: bobBucket } }]);
+  });
+
+  it('hides another user’s share links, through a filter and through their document alike', async () => {
+    const alicesView = createClient(db, alice);
+    expect((await alicesView.expectOk('{ shareLinks { id } }')).shareLinks).toEqual([]);
+    const byId = await alicesView.expectOk('query ($id: UUID!) { shareLink(where: { id: { eq: $id } }) { id } }', {
+      id: bobLink,
+    });
+    expect(byId.shareLink).toBeNull();
+    const byDocument = await alicesView.expectOk(
+      'query ($id: UUID!) { shareLinks(where: { documentId: { eq: $id } }) { id } }',
+      { id: bobDocument },
+    );
+    expect(byDocument.shareLinks).toEqual([]);
+    const asBob = await createClient(db, bob).expectOk('{ documents { shareLinks { id } } }');
+    expect(asBob.documents).toEqual([{ shareLinks: [{ id: bobLink }] }]);
+  });
+
+  it('keeps a share link’s sealed URL out of the schema', async () => {
+    const result = await createClient(db, bob).run('{ shareLinks { urlEnc } }');
+    expect(result.errors?.[0]?.message).toMatch(/Cannot query field "urlEnc"/);
+  });
+
+  it('answers each user their own settings row, and never another’s', async () => {
+    await db
+      .insert(dbSchema.appSettings)
+      .values({ userId: bob, maxUploadBytes: 2_097_152 })
+      .onConflictDoUpdate({
+        target: dbSchema.appSettings.userId,
+        set: { maxUploadBytes: 2_097_152 },
+      });
+    await db.insert(dbSchema.appSettings).values({ userId: alice }).onConflictDoNothing();
+    const asAlice = await createClient(db, alice).expectOk(
+      '{ appSettings { userId maxUploadBytes } appSettingsRows { userId } }',
+    );
+    expect(asAlice.appSettings.userId).toBe(alice);
+    expect(asAlice.appSettingsRows).toEqual([{ userId: alice }]);
+    const filtered = await createClient(db, alice).expectOk(
+      'query ($id: UUID!) { appSettings(where: { userId: { eq: $id } }) { userId } }',
+      { id: bob },
+    );
+    expect(filtered.appSettings).toBeNull();
   });
 
   it('refuses the unauthenticated', async () => {
