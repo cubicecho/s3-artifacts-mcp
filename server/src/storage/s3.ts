@@ -25,6 +25,11 @@ import { type BucketConnection, contentDisposition, httpStatus, type Storage } f
 
 /** The most keys one DeleteObjects call takes, on every S3-compatible service. */
 const DELETE_BATCH_LIMIT = 1000;
+/**
+ * The headers a presigned PUT signs. The presigner leaves `content-type` unsigned by default, and `content-length`
+ * is only signed when asked, so without this any type and any size would be accepted.
+ */
+const PUT_SIGNED_HEADERS: ReadonlySet<string> = new Set(['content-type', 'content-length']);
 /** The status a HEAD answers for a key with nothing at it, which the SDK cannot name from a body. */
 const HTTP_NOT_FOUND = 404;
 
@@ -275,6 +280,14 @@ export function createS3Storage(
           ResponseContentDisposition: contentDisposition(filename, disposition),
         }),
         { expiresIn: expiresInSeconds },
+      );
+    },
+
+    presignPut(key, { contentType, size, expiresInSeconds }) {
+      return getSignedUrl(
+        signer,
+        new PutObjectCommand({ Bucket, Key: key, ContentType: contentType, ContentLength: size }),
+        { expiresIn: expiresInSeconds, signableHeaders: new Set(PUT_SIGNED_HEADERS) },
       );
     },
   };

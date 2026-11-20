@@ -38,6 +38,16 @@ export interface PresignGetOptions {
   expiresInSeconds: number;
 }
 
+/** What a presigned PUT is signed with. The uploader must send exactly this type and length. */
+export interface PresignPutOptions {
+  /** The `Content-Type` the PUT must send, which the object is stored as. */
+  contentType: string;
+  /** The `Content-Length` the PUT must send, in bytes. */
+  size: number;
+  /** How long the URL works. */
+  expiresInSeconds: number;
+}
+
 /** What an upload is told about its body up front. */
 export interface UploadOptions {
   contentType: string;
@@ -110,6 +120,11 @@ export interface Storage {
   delete(keys: string[]): Promise<void>;
   /** A URL for the object, signed for the bucket's public endpoint, that works with no other credential. */
   presignGet(key: string, options: PresignGetOptions): Promise<string>;
+  /**
+   * A URL that stores one body at the key with a single PUT, signed for the bucket's public endpoint, that works
+   * with no other credential. The type and length are in the signature, so a PUT that sends others is refused.
+   */
+  presignPut(key: string, options: PresignPutOptions): Promise<string>;
 }
 
 /** The columns of a bucket that say how to reach it. A saved row has them, and so does a form being tested. */

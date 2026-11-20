@@ -3,7 +3,7 @@ import { type AppSettings, appSettings, ShareLinkPermission } from '@cubicecho/s
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { UPLOAD_DEFAULTS } from '../core/defaults.ts';
-import { BYTES_PER_GIBIBYTE, BYTES_PER_MEBIBYTE } from '../core/wire.ts';
+import { BYTES_PER_GIBIBYTE, BYTES_PER_KIBIBYTE, BYTES_PER_MEBIBYTE } from '../core/wire.ts';
 import { expiryHoursSchema } from '../share-links/expiry.ts';
 
 // The owner's settings row: the upload limit and what a new share link gets when its maker names nothing. Every
@@ -13,15 +13,18 @@ import { expiryHoursSchema } from '../share-links/expiry.ts';
 const { minUploadBytes, maxUploadBytes } = UPLOAD_DEFAULTS;
 
 /**
- * A byte count as an upload limit is written: whole gibibytes as GiB, anything else in MiB.
+ * A byte count as a limit is written: whole gibibytes as GiB, then MiB, and KiB below one MiB.
  *
  * @param bytes - The count.
- * @returns For example "100 MiB" or "50 GiB".
+ * @returns For example "256 KiB", "100 MiB" or "50 GiB".
  */
 export function describeBytes(bytes: number): string {
   const isWholeGibibytes = bytes >= BYTES_PER_GIBIBYTE && bytes % BYTES_PER_GIBIBYTE === 0;
   if (isWholeGibibytes) {
     return `${bytes / BYTES_PER_GIBIBYTE} GiB`;
+  }
+  if (bytes < BYTES_PER_MEBIBYTE) {
+    return `${Math.floor(bytes / BYTES_PER_KIBIBYTE)} KiB`;
   }
   return `${Math.floor(bytes / BYTES_PER_MEBIBYTE)} MiB`;
 }
