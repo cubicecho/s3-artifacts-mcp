@@ -59,8 +59,8 @@ jobs:
           DISPATCH_VERSION: ${{ inputs.version }}
         run: |
           if [ -n "$DISPATCH_VERSION" ]; then
-            echo "version=$DISPATCH_VERSION" >> $GITHUB_OUTPUT
-            echo "released=true" >> $GITHUB_OUTPUT
+            echo "version=$DISPATCH_VERSION" >> "$GITHUB_OUTPUT"
+            echo "released=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           OUTPUT=$(npx semantic-release --dry-run 2>&1)
@@ -68,10 +68,10 @@ jobs:
           VERSION=$(echo "$OUTPUT" | grep -oP 'next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
           if [ -n "$VERSION" ]; then
             npx semantic-release
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-            echo "released=true" >> $GITHUB_OUTPUT
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "released=true" >> "$GITHUB_OUTPUT"
           else
-            echo "released=false" >> $GITHUB_OUTPUT
+            echo "released=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Docker Buildx
