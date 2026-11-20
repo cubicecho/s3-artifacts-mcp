@@ -1,12 +1,13 @@
-import { type Bucket, buckets } from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { type Bucket, buckets, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { resolveSelection, singularizeMapper } from '@vantreeseba/drizzle-graphql';
-import { and, eq, ne } from 'drizzle-orm';
+import { and, count, eq, ne } from 'drizzle-orm';
 import { assertObjectType, extendSchema, type GraphQLResolveInfo, type GraphQLSchema } from 'graphql';
 import { z } from 'zod';
 import type { Context } from '../core/context.ts';
 import { badInput, conflict, ErrorCode, notFound, requireAuth, withCode } from '../core/errors.ts';
 import { SecretPurpose, SecretUnreadableError } from '../core/secrets.ts';
 import { parseOrThrow } from '../core/validation.ts';
+import { parentIdOf } from '../graphql/parent-id.ts';
 import type { BucketConnection } from '../storage/storage.ts';
 import {
   type BucketFields,
@@ -64,7 +65,7 @@ function parseBucketId(id: string): string {
  * @returns The row.
  * @throws NOT_FOUND when it is missing or not the caller's.
  */
-async function ownBucket(ctx: Context, id: string): Promise<Bucket> {
+export async function ownBucket(ctx: Context, id: string): Promise<Bucket> {
   const userId = requireAuth(ctx);
   const [row] = await ctx.db
     .select()
@@ -135,24 +136,37 @@ async function requireFreeSlug(ctx: Context, slug: string, exceptId: string | nu
 
 /** Postgres's code for a unique violation. */
 const UNIQUE_VIOLATION = '23505';
+/** Postgres's code for a foreign key refusing a write, as `documents.bucket_id`'s RESTRICT does. */
+const FOREIGN_KEY_VIOLATION = '23503';
 /** The index that keeps slugs unique, from `db/src/models/buckets.ts`. */
 const SLUG_INDEX = 'uq_buckets_slug';
 
 /**
- * Whether an error, or anything in its `cause` chain, is the slug index refusing a duplicate.
- * Drizzle wraps the driver's error, so the Postgres fields are on a cause, not the error itself.
+ * The Postgres error in an error's `cause` chain, if any. Drizzle wraps the driver's error, so its
+ * fields are on a cause, not the error itself.
+ *
+ * @param error - What a write threw.
+ * @returns The SQLSTATE and constraint name, or null when no Postgres error is in the chain.
+ */
+function postgresErrorOf(error: unknown): { code: string; constraint: unknown } | null {
+  for (let current: unknown = error; current instanceof Object; current = (current as { cause?: unknown }).cause) {
+    const { code, constraint } = current as { code?: unknown; constraint?: unknown };
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) {
+      return { code, constraint };
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether a write was refused by the slug index.
  *
  * @param error - What a write threw.
  * @returns True when another bucket took the slug between the check and the write.
  */
 function isSlugRace(error: unknown): boolean {
-  for (let current: unknown = error; current instanceof Object; current = (current as { cause?: unknown }).cause) {
-    const { code, constraint } = current as { code?: unknown; constraint?: unknown };
-    if (code === UNIQUE_VIOLATION) {
-      return constraint === SLUG_INDEX;
-    }
-  }
-  return false;
+  const found = postgresErrorOf(error);
+  return found?.code === UNIQUE_VIOLATION && found.constraint === SLUG_INDEX;
 }
 
 /**
@@ -266,8 +280,8 @@ export function applyBucketsExtension(schema: GraphQLSchema): GraphQLSchema {
   const mutations = assertObjectType(extended.getType('Mutation')).getFields();
   const bucketFields = assertObjectType(extended.getType('Bucket')).getFields();
 
-  bucketFields.secretReadable.resolve = async (parent: { id: string }, _args: unknown, context: Context) => {
-    const row = await ownBucket(context, parent.id);
+  bucketFields.secretReadable.resolve = async (parent: { id?: unknown }, _args: unknown, context: Context) => {
+    const row = await ownBucket(context, parentIdOf(parent, 'Bucket.secretReadable'));
     return context.secrets.canOpen(row.secretAccessKeyEnc, SecretPurpose.BucketSecret);
   };
 
@@ -389,9 +403,32 @@ export function applyBucketsExtension(schema: GraphQLSchema): GraphQLSchema {
     context: Context,
   ) => {
     const row = await ownBucket(context, args.id);
-    // There are no documents yet. When they arrive, a bucket they point at is refused here unless
-    // `forgetDocuments` is true, which deletes their rows and leaves the objects in place.
-    await context.db.delete(buckets).where(and(eq(buckets.id, row.id), eq(buckets.userId, row.userId)));
+    const forgetDocuments = args.forgetDocuments ?? false;
+    const inUse = conflict(
+      `${row.name} still holds documents. Delete them first, or forget them (their files stay in the bucket).`,
+    );
+    await context.db
+      .transaction(async (tx) => {
+        const isInBucket = eq(documents.bucketId, row.id);
+        if (forgetDocuments) {
+          // The rows only: the objects stay in the bucket, which the owner may still use elsewhere.
+          await tx.delete(documents).where(isInBucket);
+        } else {
+          const [{ held }] = await tx.select({ held: count() }).from(documents).where(isInBucket);
+          if (held > 0) {
+            throw conflict(
+              `${row.name} still holds ${held} document${held === 1 ? '' : 's'}. Delete them first, or forget them ` +
+                '(their files stay in the bucket).',
+            );
+          }
+        }
+        await tx.delete(buckets).where(and(eq(buckets.id, row.id), eq(buckets.userId, row.userId)));
+      })
+      .catch((error: unknown) => {
+        // An upload started between the count and the delete: the foreign key refuses, and the
+        // owner hears the same CONFLICT the count gives rather than an internal error.
+        throw postgresErrorOf(error)?.code === FOREIGN_KEY_VIOLATION ? inUse : error;
+      });
     context.storage.invalidate(row.id);
     return true;
   };

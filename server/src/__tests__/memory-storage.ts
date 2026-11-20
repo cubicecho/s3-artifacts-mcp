@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { text } from 'node:stream/consumers';
+import { buffer } from 'node:stream/consumers';
 import type { BucketConnection, Storage, StorageFactory } from '../storage/storage.ts';
 
 // Storage over Maps, standing in for an S3-compatible service in tests. A backend holds buckets by
@@ -10,10 +10,18 @@ import type { BucketConnection, Storage, StorageFactory } from '../storage/stora
 /** The operations a test can make fail. */
 export type MemoryOperation = Exclude<keyof Storage, 'presignGet'>;
 
+/** One stored object. */
+export interface MemoryObject {
+  body: Buffer;
+  contentType: string;
+}
+
 /** One in-memory bucket. */
 export interface MemoryStorage extends Storage {
   /** Every stored object's body and type, by key. */
-  objects: Map<string, { body: string; contentType: string }>;
+  objects: Map<string, MemoryObject>;
+  /** Keys a streamed upload has started on and not finished or abandoned yet, as multipart uploads in flight. */
+  inFlight: Set<string>;
   /** Operations that throw an error named for this code, as the AWS SDK names its exceptions. */
   failures: Partial<Record<MemoryOperation, string>>;
   /** When set, `presignGet` signs for this origin instead, which the backend's `fetch` does not answer. */
@@ -56,7 +64,8 @@ function serviceError(code: string, message: string): Error {
  * @returns The storage.
  */
 function createMemoryStorage(name: string): MemoryStorage {
-  const objects = new Map<string, { body: string; contentType: string }>();
+  const objects = new Map<string, MemoryObject>();
+  const inFlight = new Set<string>();
   const failures: Partial<Record<MemoryOperation, string>> = {};
 
   const failIfAsked = (operation: MemoryOperation): void => {
@@ -68,6 +77,7 @@ function createMemoryStorage(name: string): MemoryStorage {
 
   const storage: MemoryStorage = {
     objects,
+    inFlight,
     failures,
     publicOrigin: null,
 
@@ -77,7 +87,7 @@ function createMemoryStorage(name: string): MemoryStorage {
     async head(key) {
       failIfAsked('head');
       const object = objects.get(key);
-      return object === undefined ? null : { size: Buffer.byteLength(object.body), contentType: object.contentType };
+      return object === undefined ? null : { size: object.body.length, contentType: object.contentType };
     },
     async getStream(key, range) {
       failIfAsked('getStream');
@@ -85,14 +95,29 @@ function createMemoryStorage(name: string): MemoryStorage {
       if (object === undefined) {
         throw serviceError('NoSuchKey', 'The specified key does not exist.');
       }
-      const bytes = Buffer.from(object.body);
+      const bytes = object.body;
       return Readable.from([range === undefined ? bytes : bytes.subarray(range.first, range.last + 1)]);
     },
     async upload(key, body, { contentType }) {
       failIfAsked('upload');
-      const isText = typeof body === 'string';
-      const content = isText ? body : body instanceof Readable ? await text(body) : Buffer.from(body).toString();
+      const content = body instanceof Readable ? await buffer(body) : Buffer.from(body);
       objects.set(key, { body: content, contentType });
+    },
+    async uploadStream(key, body, { contentType, signal }) {
+      failIfAsked('uploadStream');
+      // As a multipart upload: nothing is at the key until the whole body has arrived, and a
+      // body that errors or an abort leaves nothing behind.
+      inFlight.add(key);
+      const onAbort = (): void => {
+        body.destroy(new Error('The upload was aborted.'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        objects.set(key, { body: await buffer(body), contentType });
+      } finally {
+        inFlight.delete(key);
+        signal?.removeEventListener('abort', onAbort);
+      }
     },
     async copy(fromKey, toKey) {
       failIfAsked('copy');
@@ -153,7 +178,7 @@ export function createMemoryBackend(): MemoryBackend {
       if (object === undefined) {
         return new Response('<Error><Code>NoSuchKey</Code></Error>', { status: NOT_FOUND });
       }
-      return new Response(object.body, { headers: { 'content-type': object.contentType } });
+      return new Response(new Uint8Array(object.body), { headers: { 'content-type': object.contentType } });
     },
   };
 }

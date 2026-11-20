@@ -10,8 +10,10 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { type BucketConnection, type Disposition, httpStatus, type Storage } from './storage.ts';
+import { UPLOAD_DEFAULTS } from '../core/defaults.ts';
+import { type BucketConnection, contentDisposition, httpStatus, type Storage } from './storage.ts';
 
 // One bucket on any S3-compatible service. Everything a client needs comes from the bucket's own
 // row, so two buckets never share a client, a credential or an endpoint, whatever their provider.
@@ -42,18 +44,6 @@ function createClient(endpoint: string | null, bucket: BucketConnection, secretA
     requestChecksumCalculation: 'WHEN_REQUIRED',
     responseChecksumValidation: 'WHEN_REQUIRED',
   });
-}
-
-/**
- * Content-Disposition with the filename quoted safely, and a UTF-8 form for non-ASCII names.
- *
- * @param filename - The name to save as.
- * @param disposition - Inline or attachment.
- * @returns The header value.
- */
-function contentDisposition(filename: string, disposition: Disposition): string {
-  const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, '_');
-  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 /**
@@ -126,11 +116,37 @@ export function createS3Storage(bucket: BucketConnection, secretAccessKey: strin
 
     async upload(key, body, { contentType, size }) {
       // A single PUT with the length declared, which streams a Readable without buffering it.
-      // Bodies past a single PUT's limit (5 GiB) need lib-storage's multipart upload, which comes
-      // with the upload route.
+      // Anything a person uploads goes through `uploadStream` instead.
       await client.send(
         new PutObjectCommand({ Bucket, Key: key, Body: body, ContentType: contentType, ContentLength: size }),
       );
+    },
+
+    async uploadStream(key, body, { contentType, signal }) {
+      // Destroying the body, rather than `Upload.abort()`, is what makes an abort wait for the
+      // multipart upload to be aborted at the service: `abort()` rejects `done()` at once and
+      // leaves the AbortMultipartUpload running behind it.
+      const onAbort = (): void => {
+        body.destroy(signal?.reason instanceof Error ? signal.reason : new Error('The upload was aborted.'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        if (signal?.aborted) {
+          onAbort();
+        }
+        // The client's WHEN_REQUIRED checksum setting also reaches lib-storage: it adds no
+        // ChecksumAlgorithm to CreateMultipartUpload, and each part is a plain UploadPart.
+        const upload = new Upload({
+          client,
+          params: { Bucket, Key: key, Body: body, ContentType: contentType },
+          partSize: UPLOAD_DEFAULTS.partSizeBytes,
+          queueSize: UPLOAD_DEFAULTS.partQueueSize,
+          leavePartsOnError: false,
+        });
+        await upload.done();
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+      }
     },
 
     async copy(fromKey, toKey) {

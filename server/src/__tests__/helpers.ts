@@ -3,6 +3,7 @@ import { relations } from '@cubicecho/s3-artifacts-mcp-db/relations';
 import * as dbSchema from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { PGlite } from '@electric-sql/pglite';
 import { pushSchema } from 'drizzle-kit/api-postgres';
+import { getTableName, is, sql, Table } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { type ExecutionResult, graphql } from 'graphql';
 import { type AuthHost, fixedAuthHost } from '../auth/auth-host.ts';
@@ -10,7 +11,7 @@ import { type Auth, createAuth, type MagicLink } from '../auth/better-auth.ts';
 import { createRateLimiter, type RateLimiter } from '../auth/rate-limit.ts';
 import { appUrl, type OidcConfig } from '../core/config.ts';
 import type { Context } from '../core/context.ts';
-import { createSecretBox, type SecretBox } from '../core/secrets.ts';
+import { createSecretBox, type SecretBox, SecretPurpose } from '../core/secrets.ts';
 import { createSchema } from '../graphql/build-schema.ts';
 import { createStorageRegistry, type StorageRegistry } from '../storage/registry.ts';
 import { createMemoryBackend, type MemoryBackend } from './memory-storage.ts';
@@ -32,6 +33,20 @@ export async function createTestDb(): Promise<TestDb> {
   const { apply } = await pushSchema(dbSchema as never, db as never);
   await apply();
   return db;
+}
+
+/** Every table in the schema, quoted for a statement that names them all. */
+const TABLE_LIST = Object.values(dbSchema)
+  .flatMap((value) => (is(value, Table) ? [`"${getTableName(value)}"`] : []))
+  .join(', ');
+
+/**
+ * Empties every table, so the next test starts from the db `createTestDb` returned. Cheaper than a new one.
+ *
+ * @param db - Test db.
+ */
+export async function resetTestDb(db: TestDb): Promise<void> {
+  await db.execute(sql.raw(`TRUNCATE TABLE ${TABLE_LIST} RESTART IDENTITY CASCADE`));
 }
 
 /**
@@ -73,6 +88,57 @@ export function createTestAuth(db: TestDb, oidc: OidcConfig | null = null): Test
     },
   });
   return { auth, links };
+}
+
+/**
+ * Opens a session for a user straight through better-auth's adapter, as a sign-in would, for a request that
+ * sends it as `Authorization: Bearer`.
+ *
+ * @param auth - The auth instance the server under test reads sessions with.
+ * @param userId - Who signs in.
+ * @returns The session token.
+ */
+export async function createSessionToken(auth: Auth, userId: string): Promise<string> {
+  const session = await (await auth.$context).internalAdapter.createSession(userId);
+  return session.token;
+}
+
+/** The secret every test bucket is sealed with, as the dev RustFS's. */
+export const TEST_BUCKET_SECRET = 's3am-dev-secret';
+
+/**
+ * Inserts a bucket row straight through Drizzle, its secret sealed with `secrets`. The connection test is not
+ * what is under test.
+ *
+ * @param db - Test db.
+ * @param secrets - Seals the secret.
+ * @param userId - Whose bucket it is.
+ * @param [overrides] - Columns to change, such as `bucket` to put it in another memory bucket.
+ * @returns The bucket's id.
+ */
+export async function insertBucket(
+  db: TestDb,
+  secrets: SecretBox,
+  userId: string,
+  overrides: Partial<dbSchema.NewBucket> = {},
+): Promise<string> {
+  const [row] = await db
+    .insert(dbSchema.buckets)
+    .values({
+      userId,
+      slug: `bucket-${Math.random().toString(36).slice(2, 10)}`,
+      name: 'Artifacts',
+      provider: 'rustfs',
+      endpoint: 'http://rustfs.test:9000',
+      region: 'us-east-1',
+      bucket: 'artifacts',
+      accessKeyId: 's3am',
+      secretAccessKeyEnc: secrets.seal(TEST_BUCKET_SECRET, SecretPurpose.BucketSecret),
+      forcePathStyle: true,
+      ...overrides,
+    })
+    .returning({ id: dbSchema.buckets.id });
+  return row.id;
 }
 
 /** Who a session token signs in as, through the same call a request's context makes. */

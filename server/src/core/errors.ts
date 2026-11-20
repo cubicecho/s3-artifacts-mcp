@@ -9,6 +9,8 @@ export const ErrorCode = {
   TooManyRequests: 'TOO_MANY_REQUESTS',
   Forbidden: 'FORBIDDEN',
   Conflict: 'CONFLICT',
+  /** A bucket refused or failed an operation the request needed. Retrying later may work. */
+  StorageError: 'STORAGE_ERROR',
 } as const;
 /** One of the codes in `ErrorCode`. */
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

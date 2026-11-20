@@ -115,3 +115,66 @@ export const BUCKET_DEFAULTS: Readonly<BucketSettings> = Object.freeze({
   slugMaxLength: 48,
   probeLinkTtlSeconds: 60,
 });
+
+/** Uploads into a bucket through the server (`PUT /api/documents/:id/content`), and the rows waiting on one. */
+export interface UploadSettings {
+  /**
+   * The largest file an upload may declare, in bytes. Step 4's `app_settings.max_upload_bytes` takes its place as
+   * the limit the owner sets, and this stays as the bound that setting is checked against.
+   */
+  maxUploadBytes: number;
+  /**
+   * How many files the app sends at once. The app keeps its own copy of this number (it cannot import the
+   * server's); this is the documented value the two agree on.
+   */
+  concurrency: number;
+  /** How long a `pending_upload` row may wait for its bytes before the sweeper drops it. */
+  pendingTtlMinutes: number;
+  /** How often the sweeper looks for such rows. */
+  sweepIntervalMinutes: number;
+  /** The size of each part of a multipart upload, in bytes. S3's minimum is 5 MiB. */
+  partSizeBytes: number;
+  /** How many parts of one upload are in flight at once. One upload buffers up to this many parts in memory. */
+  partQueueSize: number;
+}
+
+/** The shipped values of `UploadSettings`. */
+export const UPLOAD_DEFAULTS: Readonly<UploadSettings> = Object.freeze({
+  maxUploadBytes: 104_857_600,
+  concurrency: 3,
+  pendingTtlMinutes: 60,
+  sweepIntervalMinutes: 10,
+  partSizeBytes: 8_388_608,
+  partQueueSize: 4,
+});
+
+/** What a document may hold. */
+export interface DocumentSettings {
+  /** The longest title, in characters. */
+  titleMaxLength: number;
+  /** The longest filename an upload may give, in characters. */
+  filenameMaxLength: number;
+  /** The longest filename part of an object key, in characters, after it is made safe. The extension is kept. */
+  keyFilenameMaxLength: number;
+  /** The longest content type an upload may declare, in characters. */
+  contentTypeMaxLength: number;
+}
+
+/** The shipped values of `DocumentSettings`. */
+export const DOCUMENT_DEFAULTS: Readonly<DocumentSettings> = Object.freeze({
+  titleMaxLength: 200,
+  filenameMaxLength: 255,
+  keyFilenameMaxLength: 120,
+  contentTypeMaxLength: 255,
+});
+
+/** Reading a document's bytes through the server (`GET /api/documents/:id/content`). */
+export interface ContentSettings {
+  /** How long a signed content URL (`Document.contentUrl`) works, for elements that cannot send a session. */
+  urlTtlMinutes: number;
+}
+
+/** The shipped values of `ContentSettings`. */
+export const CONTENT_DEFAULTS: Readonly<ContentSettings> = Object.freeze({
+  urlTtlMinutes: 15,
+});

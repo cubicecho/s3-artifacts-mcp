@@ -19,6 +19,7 @@ import {
 } from './core/config.ts';
 import { errorMessage } from './core/errors.ts';
 import { createSecretBox } from './core/secrets.ts';
+import { startUploadSweeper } from './documents/sweep.ts';
 import { createApp } from './http/app.ts';
 import { stopOnSignals } from './http/shutdown.ts';
 import { createStorageRegistry } from './storage/registry.ts';
@@ -74,4 +75,6 @@ const server = app.listen(PORT, LISTEN_HOST, () => {
     console.warn('[auth] EXPOSE_MAGIC_LINK is on: sign-in links are returned in API responses. Private networks only.');
   }
 });
-stopOnSignals(server, { after: closeDatabase });
+// Unfinished uploads, swept on a timer that stops before the drain.
+const sweeper = startUploadSweeper({ db, storage });
+stopOnSignals(server, { before: () => sweeper.stop(), after: closeDatabase });

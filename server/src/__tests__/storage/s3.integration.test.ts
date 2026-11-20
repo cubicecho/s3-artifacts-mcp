@@ -1,8 +1,31 @@
-import { text } from 'node:stream/consumers';
-import { describe, expect, it } from 'vitest';
+import { createHash, randomBytes } from 'node:crypto';
+import type { Server } from 'node:http';
+import { Readable } from 'node:stream';
+import { buffer, text } from 'node:stream/consumers';
+import { ListMultipartUploadsCommand, S3Client } from '@aws-sdk/client-s3';
+import { DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { fixedAuthHost } from '../../auth/auth-host.ts';
+import { createRateLimiter } from '../../auth/rate-limit.ts';
 import { runBucketTest } from '../../buckets/test.ts';
+import { UPLOAD_DEFAULTS } from '../../core/defaults.ts';
+import { SecretPurpose } from '../../core/secrets.ts';
+import { HttpStatus } from '../../core/wire.ts';
+import { objectKeyFor } from '../../documents/keys.ts';
+import { createApp } from '../../http/app.ts';
+import { createStorageRegistry } from '../../storage/registry.ts';
 import { createS3Storage } from '../../storage/s3.ts';
 import { Disposition } from '../../storage/storage.ts';
+import {
+  closeTestDb,
+  createSessionToken,
+  createTestAuth,
+  createTestDb,
+  createTestSecrets,
+  createUser,
+  insertBucket,
+  type TestDb,
+} from '../helpers.ts';
 
 // Against a real S3-compatible service, which an in-memory storage cannot stand in for: signing,
 // path style, the checksum settings and the share link's host. Skipped unless S3AM_IT_ENDPOINT is
@@ -10,6 +33,9 @@ import { Disposition } from '../../storage/storage.ts';
 //
 //   S3AM_IT_ENDPOINT=http://localhost:9010 S3AM_IT_BUCKET=artifacts \
 //   S3AM_IT_ACCESS_KEY=s3am S3AM_IT_SECRET_KEY=s3am-dev-secret npx vitest run --project node s3.integration
+//
+// The streamed uploads are bigger than one part (`UPLOAD_DEFAULTS.partSizeBytes`), so they take
+// lib-storage's multipart path, with the clients' WHEN_REQUIRED checksum setting.
 
 const { S3AM_IT_ENDPOINT, S3AM_IT_BUCKET, S3AM_IT_ACCESS_KEY, S3AM_IT_SECRET_KEY, S3AM_IT_REGION } = process.env;
 const isConfigured = (S3AM_IT_ENDPOINT ?? '') !== '';
@@ -59,3 +85,161 @@ describe.skipIf(isConfigured === false)('S3 storage against a real service', () 
     expect(await storage.head(copy)).toBeNull();
   });
 });
+
+/** Past one part, so a streamed upload is multipart: one full part and a short last one. */
+const MULTIPART_BYTES = UPLOAD_DEFAULTS.partSizeBytes + 1_048_576;
+
+/**
+ * A body that arrives in 64 KiB chunks, as a request body does, and optionally fails part way.
+ *
+ * @param bytes - What it carries.
+ * @param [failAfter] - Fails once this many bytes have passed.
+ * @returns The stream.
+ */
+function streamed(bytes: Buffer, failAfter: number | null = null): Readable {
+  const chunkBytes = 65_536;
+  let offset = 0;
+  return new Readable({
+    read() {
+      const isFailing = failAfter !== null && offset >= failAfter;
+      if (isFailing) {
+        this.destroy(new Error('The client went away.'));
+        return;
+      }
+      if (offset >= bytes.length) {
+        this.push(null);
+        return;
+      }
+      this.push(bytes.subarray(offset, offset + chunkBytes));
+      offset += chunkBytes;
+    },
+  });
+}
+
+/** Several megabytes each way, to a service that may sit on a NAS's disks. */
+const STREAM_TIMEOUT_MS = 120_000;
+
+describe.skipIf(isConfigured === false)(
+  'streamed uploads against a real service',
+  { timeout: STREAM_TIMEOUT_MS },
+  () => {
+    const connection = {
+      endpoint: S3AM_IT_ENDPOINT ?? null,
+      publicEndpoint: null,
+      region: S3AM_IT_REGION ?? 'us-east-1',
+      bucket: S3AM_IT_BUCKET ?? 'artifacts',
+      accessKeyId: S3AM_IT_ACCESS_KEY ?? '',
+      forcePathStyle: true,
+    };
+    const storage = createS3Storage(connection, S3AM_IT_SECRET_KEY ?? '');
+    const bytes = randomBytes(MULTIPART_BYTES);
+
+    it('streams a multipart body, then reads a range of it back', async () => {
+      const key = `.s3am-it-stream-${Date.now()}`;
+      await storage.uploadStream(key, streamed(bytes), { contentType: 'application/octet-stream', size: bytes.length });
+      try {
+        expect(await storage.head(key)).toEqual({ size: bytes.length, contentType: 'application/octet-stream' });
+        const last = bytes.length - 1;
+        const tail = await buffer(await storage.getStream(key, { first: last - 99, last }));
+        expect(tail.equals(bytes.subarray(last - 99))).toBe(true);
+      } finally {
+        await storage.delete([key]);
+      }
+    });
+
+    it('aborts the multipart upload when the body fails, leaving no object and no parts', async () => {
+      const key = `.s3am-it-abort-${Date.now()}`;
+      const failing = streamed(bytes, UPLOAD_DEFAULTS.partSizeBytes + 65_536);
+      await expect(
+        storage.uploadStream(key, failing, { contentType: 'application/octet-stream', size: bytes.length }),
+      ).rejects.toThrow('The client went away.');
+      expect(await storage.head(key)).toBeNull();
+      const client = new S3Client({
+        endpoint: connection.endpoint ?? undefined,
+        region: connection.region,
+        credentials: { accessKeyId: connection.accessKeyId, secretAccessKey: S3AM_IT_SECRET_KEY ?? '' },
+        forcePathStyle: true,
+      });
+      const { Uploads = [] } = await client.send(
+        new ListMultipartUploadsCommand({ Bucket: connection.bucket, Prefix: key }),
+      );
+      expect(Uploads).toEqual([]);
+    });
+
+    describe('through the app’s content routes', () => {
+      let db: TestDb;
+      let server: Server;
+      let origin: string;
+      let token: string;
+      let bucketId: string;
+      let owner: string;
+
+      beforeAll(async () => {
+        db = await createTestDb();
+        const auth = createTestAuth(db).auth;
+        const secrets = createTestSecrets();
+        owner = await createUser(db, 'owner@example.com');
+        token = await createSessionToken(auth, owner);
+        const registry = createStorageRegistry({ db, secrets });
+        bucketId = await insertBucket(db, secrets, owner, {
+          endpoint: connection.endpoint,
+          region: connection.region,
+          bucket: connection.bucket,
+          accessKeyId: connection.accessKeyId,
+          secretAccessKeyEnc: secrets.seal(S3AM_IT_SECRET_KEY ?? '', SecretPurpose.BucketSecret),
+        });
+        const app = createApp({
+          db,
+          authHost: fixedAuthHost(auth),
+          limiter: createRateLimiter(),
+          storage: registry,
+          secrets,
+        });
+        server = await new Promise<Server>((resolve) => {
+          const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+        });
+        const address = server.address();
+        if (address === null || typeof address === 'string') {
+          throw new Error('expected the test server to listen on a TCP port');
+        }
+        origin = `http://127.0.0.1:${address.port}`;
+      }, STREAM_TIMEOUT_MS);
+
+      afterAll(async () => {
+        await new Promise((resolve) => server.close(resolve));
+        await closeTestDb(db);
+      });
+
+      it('PUTs a file into the bucket, then serves a range of it', async () => {
+        const id = crypto.randomUUID();
+        const objectKey = objectKeyFor(id, 'it-upload.bin');
+        await db.insert(documents).values({
+          id,
+          userId: owner,
+          bucketId,
+          title: 'it-upload',
+          filename: 'it-upload.bin',
+          objectKey,
+          contentType: 'application/octet-stream',
+          size: bytes.length,
+          status: DocumentStatus.PendingUpload,
+        });
+        const path = `${origin}/api/documents/${id}/content`;
+        const authorization = `Bearer ${token}`;
+        try {
+          const put = await fetch(path, { method: 'PUT', headers: { authorization }, body: new Uint8Array(bytes) });
+          expect(put.status).toBe(HttpStatus.Ok);
+          const uploaded = await put.json();
+          expect(uploaded.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
+
+          const range = await fetch(path, { headers: { authorization, range: 'bytes=1000-1999' } });
+          expect(range.status).toBe(HttpStatus.PartialContent);
+          expect(range.headers.get('content-range')).toBe(`bytes 1000-1999/${bytes.length}`);
+          expect(Buffer.from(await range.arrayBuffer()).equals(bytes.subarray(1000, 2000))).toBe(true);
+        } finally {
+          await storage.delete([objectKey]);
+        }
+      });
+    });
+  },
+);

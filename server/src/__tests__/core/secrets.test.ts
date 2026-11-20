@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSecretBox, SecretPurpose, SecretUnreadableError } from '../../core/secrets.ts';
+import { createSecretBox, SecretPurpose, SecretUnreadableError, SignaturePurpose } from '../../core/secrets.ts';
 import { TEST_SECRET } from '../helpers.ts';
 
 const ROTATED_SECRET = 'another-secret-0123456789abcdef0123456789';
@@ -38,5 +38,18 @@ describe('secrets', () => {
     expect(box.canOpen([version, iv, flipped, tag].join('.'), SecretPurpose.BucketSecret)).toBe(false);
     expect(box.canOpen(['v9', iv, ciphertext, tag].join('.'), SecretPurpose.BucketSecret)).toBe(false);
     expect(box.canOpen('plaintext', SecretPurpose.BucketSecret)).toBe(false);
+  });
+
+  it('verifies its own signature, and nothing else', () => {
+    const signature = box.sign('doc\nkey', SignaturePurpose.ContentUrl);
+    expect(box.verify('doc\nkey', signature, SignaturePurpose.ContentUrl)).toBe(true);
+    expect(box.verify('doc\nother-key', signature, SignaturePurpose.ContentUrl)).toBe(false);
+    expect(box.verify('doc\nkey', `${signature}A`, SignaturePurpose.ContentUrl)).toBe(false);
+    expect(box.verify('doc\nkey', '', SignaturePurpose.ContentUrl)).toBe(false);
+  });
+
+  it('signs with a key of its own, which a rotated secret does not share', () => {
+    const signature = box.sign('message', SignaturePurpose.ContentUrl);
+    expect(createSecretBox(ROTATED_SECRET).verify('message', signature, SignaturePurpose.ContentUrl)).toBe(false);
   });
 });

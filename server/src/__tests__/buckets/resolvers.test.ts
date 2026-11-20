@@ -1,4 +1,4 @@
-import { buckets } from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { buckets, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TEST_FAILED_REASON } from '../../buckets/resolvers.ts';
@@ -33,6 +33,7 @@ const SET_MCP = `
   }
 `;
 const DELETE = 'mutation ($id: UUID!) { deleteBucket(id: $id) }';
+const FORGET = 'mutation ($id: UUID!) { deleteBucket(id: $id, forgetDocuments: true) }';
 const LIST = '{ buckets(orderBy: { createdAt: { direction: asc, priority: 1 } }) { id slug } }';
 const PRESETS =
   '{ bucketPresets { provider label forcePathStyle defaultRegion endpointRequired regionRequired endpointExample } }';
@@ -330,6 +331,14 @@ describe('bucket resolvers', () => {
     expect((await client().expectOk('{ buckets { secretReadable } }')).buckets).toEqual([{ secretReadable: true }]);
   });
 
+  it('asks for the id, not NOT_FOUND, when other columns are selected without it', async () => {
+    // drizzle-graphql adds the primary key only when a query names no column at all.
+    await create();
+    const error = await client().expectError('{ buckets { name secretReadable } }');
+    expect(error.code).toBe(ErrorCode.BadUserInput);
+    expect(error.message).toMatch(/Select `id` alongside Bucket\.secretReadable/);
+  });
+
   it('switches MCP on and writable, and refuses writable while off', async () => {
     const bucket = await create();
     const { setBucketMcp } = await client().expectOk(SET_MCP, { id: bucket.id, enabled: true, writable: true });
@@ -353,6 +362,46 @@ describe('bucket resolvers', () => {
     await client().expectOk(DELETE, { id: second.id });
     expect((await client().expectOk(LIST)).buckets).toEqual([]);
     expect(invalidated).toEqual(expect.arrayContaining([first.id, second.id, third.id]));
+  });
+
+  describe('a bucket that documents point at', () => {
+    /** Inserts a document in the bucket, its object stored too. */
+    async function documentIn(bucketId: string, key: string) {
+      await db.insert(documents).values({
+        userId: owner,
+        bucketId,
+        title: key,
+        filename: `${key}.txt`,
+        objectKey: key,
+        contentType: 'text/plain',
+        size: 2,
+        status: DocumentStatus.Ready,
+      });
+      backend.bucket('artifacts').objects.set(key, { body: Buffer.from('hi'), contentType: 'text/plain' });
+    }
+
+    it('is refused with CONFLICT, and kept with its documents', async () => {
+      const bucket = await create();
+      await documentIn(bucket.id, 'one');
+      await documentIn(bucket.id, 'two');
+      const { code, message } = await client().expectError(DELETE, { id: bucket.id });
+      expect(code).toBe(ErrorCode.Conflict);
+      expect(message).toMatch(/2 documents/);
+      expect((await client().expectOk(LIST)).buckets).toHaveLength(1);
+      expect(await db.select().from(documents)).toHaveLength(2);
+    });
+
+    it('forgets the documents’ rows and leaves their objects in the bucket', async () => {
+      const bucket = await create();
+      const kept = await create({ name: 'Kept', bucket: 'kept' });
+      await documentIn(bucket.id, 'one');
+      await documentIn(kept.id, 'elsewhere');
+      expect((await client().expectOk(FORGET, { id: bucket.id })).deleteBucket).toBe(true);
+      expect((await client().expectOk(LIST)).buckets).toEqual([{ id: kept.id, slug: 'kept' }]);
+      const left = await db.select({ objectKey: documents.objectKey }).from(documents);
+      expect(left).toEqual([{ objectKey: 'elsewhere' }]);
+      expect(backend.bucket('artifacts').objects.has('one')).toBe(true);
+    });
   });
 
   it('frees the slug of a deleted bucket', async () => {

@@ -8,8 +8,14 @@ import * as schema from './schema.ts';
 export const relations = defineRelations(schema, (r) => ({
   users: {
     buckets: r.many.buckets(),
+    documents: r.many.documents(),
   },
   buckets: {
     user: r.one.users({ from: r.buckets.userId, to: r.users.id, optional: false }),
+    documents: r.many.documents(),
+  },
+  documents: {
+    user: r.one.users({ from: r.documents.userId, to: r.users.id, optional: false }),
+    bucket: r.one.buckets({ from: r.documents.bucketId, to: r.buckets.id, optional: false }),
   },
 }));

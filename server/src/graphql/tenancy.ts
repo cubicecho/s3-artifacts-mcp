@@ -14,10 +14,10 @@ import { requireAuth } from '../core/errors.ts';
 type AnyTable = any;
 
 /**
- * The tables whose rows carry the owner's id and are scoped by it. The documents, tags and share
- * links each add theirs here with their model.
+ * The tables whose rows carry the owner's id and are scoped by it. The tags and share links each
+ * add theirs here with their model.
  */
-export const USER_OWNED_TABLES = ['buckets'] as const;
+export const USER_OWNED_TABLES = ['buckets', 'documents'] as const;
 
 /** Every table with a scope entry: the ones drizzle-graphql generates fields for. */
 export const ALL_TABLES = ['users', ...USER_OWNED_TABLES] as const;
@@ -30,6 +30,7 @@ export const scope: NonNullable<BuildSchemaConfig['scope']> = {
   // A user row is only ever visible to its owner. There is no directory here.
   users: (context, table) => eq((table as AnyTable).id, requireAuth(context)),
   buckets: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
+  documents: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
 };
 
 /**
@@ -38,6 +39,7 @@ export const scope: NonNullable<BuildSchemaConfig['scope']> = {
  */
 export const contextValues: NonNullable<BuildSchemaConfig['contextValues']> = {
   buckets: { userId: (context) => requireAuth(context) },
+  documents: { userId: (context) => requireAuth(context) },
 };
 
 /**

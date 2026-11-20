@@ -5,6 +5,7 @@ import { GraphQLObjectType, GraphQLSchema } from 'graphql';
 import { applyApiKeysExtension } from '../api-keys/resolvers.ts';
 import { applyAuthExtension } from '../auth/resolvers.ts';
 import { applyBucketsExtension } from '../buckets/resolvers.ts';
+import { applyDocumentsExtension } from '../documents/resolvers.ts';
 import { applySsoExtension } from '../sso/resolvers.ts';
 import { describeColumn, describeTable } from './docs.ts';
 import { contextValues, features, scope } from './tenancy.ts';
@@ -13,6 +14,12 @@ import { contextValues, features, scope } from './tenancy.ts';
 // `features` in tenancy.ts for why). Kept separate from schema.ts, which binds
 // it to the real database, so a test can build the same schema against a
 // throwaway one.
+
+/** GraphQL names for the Postgres enums, instead of drizzle-graphql's `<Name>Enum`. */
+const ENUM_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  bucket_provider: 'BucketProvider',
+  document_status: 'DocumentStatus',
+});
 
 /**
  * With every generated write turned off, drizzle-graphql omits the Mutation
@@ -47,7 +54,7 @@ export function createSchema(db: DB): GeneratedData<DB, 'singularize'> {
     // A bucket's sealed secret is read only by the storage registry, never through the API.
     exclude: { tables: [...AUTH_TABLES, ...SERVER_TABLES], columns: { buckets: ['secretAccessKeyEnc'] } },
     // `bucket_provider` reads as `BucketProvider`, not drizzle-graphql's `BucketProviderEnum`.
-    enumNameMapper: ({ enumName }) => (enumName === 'bucket_provider' ? 'BucketProvider' : undefined),
+    enumNameMapper: ({ enumName }) => (enumName === undefined ? undefined : ENUM_NAMES[enumName]),
     describeTable,
     describeColumn,
     scope,
@@ -60,6 +67,7 @@ export function createSchema(db: DB): GeneratedData<DB, 'singularize'> {
   schema = applySsoExtension(schema);
   schema = applyApiKeysExtension(schema);
   schema = applyBucketsExtension(schema);
+  schema = applyDocumentsExtension(schema);
 
   return { schema, entities };
 }

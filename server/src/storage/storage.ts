@@ -39,6 +39,38 @@ export interface UploadOptions {
   size: number;
 }
 
+/** What a streamed upload is told up front. */
+export interface StreamUploadOptions extends UploadOptions {
+  /** Aborts the upload: what was sent so far is thrown away, and nothing is left at the key. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Characters RFC 5987 lets through unencoded in an `ext-value` (`attr-char`). `encodeURIComponent`
+ * also leaves `'`, `(`, `)` and `*` alone, which this does not allow.
+ */
+const RFC5987_UNENCODED = /['()*]/g;
+/** Percent-encoding writes a byte in hexadecimal. */
+const HEX_RADIX = 16;
+/** What the plain `filename=` fallback cannot hold: anything outside printable ASCII, quotes and backslashes. */
+const UNQUOTABLE = /[^\x20-\x7e]|["\\]/g;
+
+/**
+ * Content-Disposition with the filename quoted safely, and a UTF-8 form (RFC 5987 / 6266) for non-ASCII names.
+ *
+ * @param filename - The name to save as.
+ * @param disposition - Inline or attachment.
+ * @returns The header value.
+ */
+export function contentDisposition(filename: string, disposition: Disposition): string {
+  const fallback = filename.replace(UNQUOTABLE, '_');
+  const encoded = encodeURIComponent(filename).replace(
+    RFC5987_UNENCODED,
+    (char) => `%${char.charCodeAt(0).toString(HEX_RADIX).toUpperCase()}`,
+  );
+  return `${disposition}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
 /**
  * Everything the app asks of one bucket. An interface rather than the S3 client itself, so tests
  * hand in a map and nothing outside storage/ knows which SDK is behind it.
@@ -50,8 +82,17 @@ export interface Storage {
   head(key: string): Promise<ObjectHead | null>;
   /** The object's bytes, or only those in `range`. */
   getStream(key: string, range?: ByteRange): Promise<Readable>;
-  /** Stores a body at the key, replacing whatever was there. */
+  /** Stores a body at the key, replacing whatever was there, in one PUT. For small bodies, such as the bucket test's probe. */
   upload(key: string, body: Readable | Uint8Array | string, options: UploadOptions): Promise<void>;
+  /**
+   * Streams a body of any size to the key, in parts once it is past one part's size.
+   *
+   * @remarks
+   * A body that errors (a client that went away, a length check that failed) or an abort makes it reject, after
+   * the multipart upload has been aborted, so no parts are left behind. A single-part body that never completed
+   * was never written.
+   */
+  uploadStream(key: string, body: Readable, options: StreamUploadOptions): Promise<void>;
   /** Copies an object to another key in the same bucket. */
   copy(fromKey: string, toKey: string): Promise<void>;
   /** Deletes the objects at the keys. A key with nothing at it is not an error. */

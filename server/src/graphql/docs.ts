@@ -8,6 +8,7 @@ const TABLE_DOCS: Readonly<Record<string, string>> = Object.freeze({
   users: 'A person with an account. Only the caller’s own row is visible.',
   buckets:
     'A bucket on an S3-compatible service, with its own endpoint, region and credentials. Its secret is never returned.',
+  documents: 'A file uploaded through the app into one of the owner’s buckets.',
 });
 
 /** What each generated column field holds. */
@@ -24,6 +25,16 @@ const COLUMN_DOCS: Readonly<Record<string, Readonly<Record<string, string>>>> = 
     forcePathStyle: 'Whether the bucket is addressed in the path (`host/bucket/key`) rather than the host.',
     mcpEnabled: 'Whether MCP clients may reach the bucket at its endpoint.',
     mcpWritable: 'Whether MCP clients may upload to the bucket and share from it, not only read.',
+  }),
+  documents: Object.freeze({
+    bucketId: 'The bucket the document’s bytes are in.',
+    title: 'What the UI calls the document. It starts as the filename without its extension.',
+    filename: 'The name the file was uploaded as, which a download saves it as.',
+    objectKey: 'Where the bytes are in the bucket: `<objectId>-<safe filename>`, at its top level.',
+    contentType: 'The MIME type the document is served as.',
+    size: 'The file’s length in bytes.',
+    sha256: 'The SHA-256 of the bytes, in hex. Null until the upload has finished.',
+    status: '`pending_upload` while its bytes are on their way, `ready` once they are in the bucket.',
   }),
 });
 

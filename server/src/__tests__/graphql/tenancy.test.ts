@@ -20,7 +20,7 @@ const tableKeys = Object.entries(dbSchema)
 
 describe('tenancy configuration', () => {
   it('finds the tables', () => {
-    expect(tableKeys.sort()).toEqual(['buckets', 'users']);
+    expect(tableKeys.sort()).toEqual(['buckets', 'documents', 'users']);
   });
 
   it.each(tableKeys)('scopes %s to the caller', (key) => {
@@ -49,6 +49,7 @@ describe('tenancy at runtime', () => {
   let bob: string;
 
   let bobBucket: string;
+  let bobDocument: string;
 
   beforeAll(async () => {
     db = await createTestDb();
@@ -70,6 +71,19 @@ describe('tenancy at runtime', () => {
       })
       .returning({ id: dbSchema.buckets.id });
     bobBucket = row.id;
+    const [document] = await db
+      .insert(dbSchema.documents)
+      .values({
+        userId: bob,
+        bucketId: bobBucket,
+        title: 'Bob’s notes',
+        filename: 'notes.txt',
+        objectKey: 'notes',
+        contentType: 'text/plain',
+        size: 5,
+      })
+      .returning({ id: dbSchema.documents.id });
+    bobDocument = document.id;
   });
 
   afterAll(() => closeTestDb(db));
@@ -95,6 +109,22 @@ describe('tenancy at runtime', () => {
     );
     expect(filtered.buckets).toEqual([]);
     expect((await createClient(db, bob).expectOk('{ buckets { id } }')).buckets).toEqual([{ id: bobBucket }]);
+  });
+
+  it('hides another user’s documents, even through a filter on their id or their bucket', async () => {
+    const alicesView = createClient(db, alice);
+    expect((await alicesView.expectOk('{ documents { id } }')).documents).toEqual([]);
+    const byId = await alicesView.expectOk('query ($id: UUID!) { document(where: { id: { eq: $id } }) { id } }', {
+      id: bobDocument,
+    });
+    expect(byId.document).toBeNull();
+    const byBucket = await alicesView.expectOk(
+      'query ($id: UUID!) { documents(where: { bucketId: { eq: $id } }) { id } }',
+      { id: bobBucket },
+    );
+    expect(byBucket.documents).toEqual([]);
+    const asBob = await createClient(db, bob).expectOk('{ documents { id bucket { id } } }');
+    expect(asBob.documents).toEqual([{ id: bobDocument, bucket: { id: bobBucket } }]);
   });
 
   it('refuses the unauthenticated', async () => {

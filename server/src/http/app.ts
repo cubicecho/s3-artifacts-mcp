@@ -7,6 +7,7 @@ import type { SecretBox } from '../core/secrets.ts';
 import { HttpStatus } from '../core/wire.ts';
 import { createGraphQLHandler } from '../graphql/handler.ts';
 import type { StorageRegistry } from '../storage/registry.ts';
+import { mountContent } from './content.ts';
 import { checkHealth } from './health.ts';
 import { mountSso } from './sso.ts';
 import { createStaticHandler } from './static.ts';
@@ -55,6 +56,8 @@ export function createApp({ staticDir, fetch: fetchUrl = fetch, ...deps }: AppDe
   // Before the static handler too: its SPA fallback would answer both paths with the app.
   // Always mounted, because a provider can be paired while the server runs.
   mountSso(app, deps.authHost);
+  // A document's bytes, in and out, and a JSON 404 for the rest of /api.
+  mountContent(app, deps);
   if (staticDir !== undefined) {
     const serveStatic = createStaticHandler(staticDir);
     app.use((req, res) => serveStatic(req, res));

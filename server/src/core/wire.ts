@@ -17,13 +17,18 @@ export const MAX_UTF8_BYTES_PER_CODE_UNIT = 3;
 /** The HTTP statuses this server answers with by hand. */
 export const HttpStatus = {
   Ok: 200,
+  PartialContent: 206,
   Found: 302,
   BadRequest: 400,
   Unauthorized: 401,
   Forbidden: 403,
   NotFound: 404,
   MethodNotAllowed: 405,
+  Conflict: 409,
+  PayloadTooLarge: 413,
+  RangeNotSatisfiable: 416,
   TooManyRequests: 429,
   InternalServerError: 500,
+  BadGateway: 502,
   ServiceUnavailable: 503,
 } as const;

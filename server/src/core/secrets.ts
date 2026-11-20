@@ -1,10 +1,13 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 
 // Credentials the server has to read back (a bucket's secret key, later a share link's URL) are
 // sealed with AES-256-GCM before they reach the database. The key is derived from
 // `BETTER_AUTH_SECRET` by HKDF, so there is no second secret to keep, and rotating that one makes
 // everything sealed with it unreadable: `open` then throws `SecretUnreadableError`, which the
 // caller turns into "enter the secret again" rather than a crash.
+//
+// The same secret also derives a second, separate key for signing short-lived tokens the server
+// hands out and later checks (a document's content URL). Rotating the secret invalidates them too.
 
 /** What a sealed value is for. It is bound into the ciphertext, so one cannot be opened as another. */
 export const SecretPurpose = {
@@ -12,6 +15,14 @@ export const SecretPurpose = {
 } as const;
 /** One of the purposes in `SecretPurpose`. */
 export type SecretPurpose = (typeof SecretPurpose)[keyof typeof SecretPurpose];
+
+/** What a signature is for. It is signed along with the message, so one cannot pass as another. */
+export const SignaturePurpose = {
+  /** `GET /api/documents/:id/content?t=…`, for elements that cannot send a session. */
+  ContentUrl: 'content-url',
+} as const;
+/** One of the purposes in `SignaturePurpose`. */
+export type SignaturePurpose = (typeof SignaturePurpose)[keyof typeof SignaturePurpose];
 
 /** The envelope's format version, its first segment. A new format adds a version and keeps opening this one. */
 const ENVELOPE_VERSION = 'v1';
@@ -31,6 +42,13 @@ const HKDF_DIGEST = 'sha256';
 const HKDF_SALT = 's3-artifacts-mcp';
 /** HKDF's info, which keeps this key apart from anything else derived from the same secret. */
 const HKDF_INFO = 'secrets v1';
+/** HKDF's info for the signing key, so it is never the encryption key. */
+const HKDF_SIGNING_INFO = 'signatures v1';
+const HMAC_DIGEST = 'sha256';
+/** HMAC-SHA256's key length, in bytes: its block size would do no better. */
+const SIGNING_KEY_BYTES = 32;
+/** Separates a signature's purpose from its message. Never in a purpose. */
+const PURPOSE_SEPARATOR = '\n';
 const ENCODING = 'base64url';
 
 /** A sealed value could not be opened: the key it was sealed with is gone, or the envelope is damaged. */
@@ -44,7 +62,7 @@ export class SecretUnreadableError extends Error {
   }
 }
 
-/** Seals and opens credentials with one key. */
+/** Seals and opens credentials, and signs and checks tokens, with keys derived from one secret. */
 export interface SecretBox {
   /**
    * Encrypts a value for the database.
@@ -71,6 +89,23 @@ export interface SecretBox {
    * @returns False where `open` would throw.
    */
   canOpen(envelope: string, purpose: SecretPurpose): boolean;
+  /**
+   * Signs a message with HMAC-SHA256.
+   *
+   * @param message - What the signature vouches for.
+   * @param purpose - What it is for, which only the same purpose verifies.
+   * @returns The signature, base64url.
+   */
+  sign(message: string, purpose: SignaturePurpose): string;
+  /**
+   * Checks a signature made by `sign`, in constant time.
+   *
+   * @param message - What the signature should vouch for.
+   * @param signature - What the caller presented.
+   * @param purpose - What it was signed for.
+   * @returns Whether it is that message's signature, for that purpose, under the current secret.
+   */
+  verify(message: string, signature: string, purpose: SignaturePurpose): boolean;
 }
 
 /**
@@ -81,6 +116,10 @@ export interface SecretBox {
  */
 export function createSecretBox(masterSecret: string): SecretBox {
   const key = Buffer.from(hkdfSync(HKDF_DIGEST, masterSecret, HKDF_SALT, HKDF_INFO, KEY_BYTES));
+  const signingKey = Buffer.from(hkdfSync(HKDF_DIGEST, masterSecret, HKDF_SALT, HKDF_SIGNING_INFO, SIGNING_KEY_BYTES));
+
+  const mac = (message: string, purpose: SignaturePurpose): Buffer =>
+    createHmac(HMAC_DIGEST, signingKey).update(`${purpose}${PURPOSE_SEPARATOR}${message}`).digest();
 
   const open = (envelope: string, purpose: SecretPurpose): string => {
     const segments = envelope.split(SEPARATOR);
@@ -123,6 +162,16 @@ export function createSecretBox(masterSecret: string): SecretBox {
         }
         throw error;
       }
+    },
+    sign(message, purpose) {
+      return mac(message, purpose).toString(ENCODING);
+    },
+    verify(message, signature, purpose) {
+      const expected = mac(message, purpose);
+      const presented = Buffer.from(signature, ENCODING);
+      // timingSafeEqual throws on a length mismatch, and the length is no secret.
+      const isSameLength = presented.length === expected.length;
+      return isSameLength && timingSafeEqual(presented, expected);
     },
   };
 }

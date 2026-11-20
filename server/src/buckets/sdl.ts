@@ -122,7 +122,7 @@ export const BUCKETS_SDL = parse(`
   extend type Bucket {
     """
     Whether the stored secret can still be decrypted. False after \`BETTER_AUTH_SECRET\` changed: the bucket
-    then needs its secret entered again (\`setBucketSecret\`) before it can be used.
+    then needs its secret entered again (\`setBucketSecret\`) before it can be used. Select \`id\` beside it.
     """
     secretReadable: Boolean!
   }
