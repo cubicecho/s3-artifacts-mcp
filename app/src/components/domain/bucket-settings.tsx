@@ -7,6 +7,7 @@ import { CardLayout } from '@/components/card-layout';
 import { ConfirmButton } from '@/components/confirm-button';
 import { Star } from '@/components/domain/app-icons';
 import { BucketFormDialog, type EditableBucket } from '@/components/domain/bucket-form-dialog';
+import { BucketSecretDialog } from '@/components/domain/bucket-secret-dialog';
 import { type BucketTestOutcome, BucketTestReport } from '@/components/domain/bucket-test-report';
 import { EmptyState } from '@/components/empty-state';
 import { List } from '@/components/list';
@@ -154,6 +155,7 @@ export function BucketSettings() {
   const [deleteBucket] = useMutation(DeleteBucket);
   const [editing, setEditing] = useState<EditableBucket | 'new' | null>(null);
   const [removing, setRemoving] = useState<BucketRow | null>(null);
+  const [rekeying, setRekeying] = useState<BucketRow | null>(null);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [failure, setFailure] = useState<string | undefined>();
   const [tests, setTests] = useState<Record<string, TestState>>({});
@@ -270,6 +272,7 @@ export function BucketSettings() {
                     onTest={() => void test(bucket)}
                     onMakeDefault={() => void makeDefault(bucket)}
                     onEdit={() => setEditing(bucket)}
+                    onReenterSecret={() => setRekeying(bucket)}
                     onRemove={() => setRemoving(bucket)}
                   />
                 ))}
@@ -285,6 +288,10 @@ export function BucketSettings() {
           onSaved={() => result.refetch()}
           onClose={() => setEditing(null)}
         />
+      )}
+
+      {rekeying !== null && (
+        <BucketSecretDialog bucket={rekeying} onSaved={() => result.refetch()} onClose={() => setRekeying(null)} />
       )}
 
       <ConfirmDialog
@@ -316,6 +323,8 @@ interface BucketListRowProps {
   onTest: () => void;
   onMakeDefault: () => void;
   onEdit: () => void;
+  /** Opens the secret-only dialog, for a bucket whose stored secret no longer opens. */
+  onReenterSecret: () => void;
   onRemove: () => void;
 }
 
@@ -326,7 +335,16 @@ interface BucketListRowProps {
  * @param props - The bucket, its last test, and what each action calls.
  * @returns The row.
  */
-function BucketListRow({ bucket, providerLabel, test, onTest, onMakeDefault, onEdit, onRemove }: BucketListRowProps) {
+function BucketListRow({
+  bucket,
+  providerLabel,
+  test,
+  onTest,
+  onMakeDefault,
+  onEdit,
+  onReenterSecret,
+  onRemove,
+}: BucketListRowProps) {
   const isUnreadable = bucket.secretReadable === false;
 
   return (
@@ -348,7 +366,13 @@ function BucketListRow({ bucket, providerLabel, test, onTest, onMakeDefault, onE
         actionSlot={
           <>
             {isUnreadable ? (
-              <Button size="sm" variant="outline" iconSlot={<KeyRound />} content="Re-enter secret" onClick={onEdit} />
+              <Button
+                size="sm"
+                variant="outline"
+                iconSlot={<KeyRound />}
+                content="Re-enter secret"
+                onClick={onReenterSecret}
+              />
             ) : (
               <Button
                 size="sm"

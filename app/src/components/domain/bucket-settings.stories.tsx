@@ -107,10 +107,36 @@ export const UnreadableSecret: Story = {
     await expect(within(reports).queryByRole('button', { name: 'Test Reports' })).not.toBeInTheDocument();
     await userEvent.click(within(reports).getByRole('button', { name: 'Re-enter secret' }));
 
+    // Only the secret: the other fields stay as stored.
     const dialog = within(await within(canvasElement.ownerDocument.body).findByRole('dialog'));
-    await expect(dialog.getByText('Enter the secret again')).toBeInTheDocument();
-    await expect(dialog.getByLabelText(/^Secret access key/)).toBeRequired();
+    await expect(dialog.queryByLabelText(/^Name/)).not.toBeInTheDocument();
+    const secret = dialog.getByLabelText(/^Secret access key/);
+    await expect(secret).toBeRequired();
+    await userEvent.type(secret, 'the-new-secret');
+    await userEvent.click(dialog.getByRole('button', { name: 'Save secret' }));
+
+    await waitFor(() => expect(within(reports).queryByText('Secret unreadable')).not.toBeInTheDocument());
+    await expect(within(reports).getByRole('button', { name: 'Test Reports' })).toBeVisible();
     await expect(canvas.getByText('Artifacts')).toBeInTheDocument();
+  },
+};
+
+/** The secret is tested before it is saved; a wrong one is refused in the dialog, which stays open. */
+export const ReenterSecretRefused: Story = {
+  parameters: {
+    apolloClient: {
+      resolvers: bucketServer([{ ...S3_BUCKET, secretReadable: false }], {
+        saveRefusal: 'The test failed at HeadBucket (HTTP_403): access denied. Check the access key and secret.',
+      }).resolvers,
+    },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await userEvent.click(await canvas.findByRole('button', { name: 'Re-enter secret' }));
+    const dialog = within(await within(canvasElement.ownerDocument.body).findByRole('dialog'));
+    await userEvent.type(dialog.getByLabelText(/^Secret access key/), 'wrong');
+    await userEvent.click(dialog.getByRole('button', { name: 'Save secret' }));
+    await expect(await dialog.findByText('Could not save the secret')).toBeInTheDocument();
+    await expect(dialog.getByText(/HeadBucket/)).toBeInTheDocument();
   },
 };
 

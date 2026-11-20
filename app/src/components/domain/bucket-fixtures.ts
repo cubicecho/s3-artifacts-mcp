@@ -184,7 +184,7 @@ export const TEST_WARNED: BucketTestOutcome = {
 interface BucketServerOptions {
   /** What `testBucket` answers. */
   test?: BucketTestOutcome;
-  /** When set, `createBucket` and `updateBucket` refuse with this message. */
+  /** When set, `createBucket`, `updateBucket` and `setBucketSecret` refuse with this message. */
   saveRefusal?: string;
   /** When set, `deleteBucket` without `forgetDocuments` refuses as the server does while documents remain. */
   hasDocuments?: boolean;
@@ -248,6 +248,15 @@ export function bucketServer(start: readonly BucketFixture[], options: BucketSer
           throw new GraphQLError('No such bucket', { extensions: { code: 'NOT_FOUND' } });
         }
         Object.assign(bucket, args.input, { secretReadable: true });
+        return bucket;
+      },
+      setBucketSecret: (_parent: unknown, args: { id: string; secretAccessKey: string }) => {
+        refuseSave();
+        const bucket = buckets.find((entry) => entry.id === args.id);
+        if (bucket === undefined) {
+          throw new GraphQLError('No such bucket', { extensions: { code: 'NOT_FOUND' } });
+        }
+        bucket.secretReadable = true;
         return bucket;
       },
       setDefaultBucket: (_parent: unknown, args: { id: string }) => {
