@@ -145,10 +145,11 @@ ones that shape what you see:
   app. The environment holds only what is needed before anyone can sign in.
 - **The app's own uploads and downloads stream through the server.** No bucket
   CORS is needed, and every backend behaves the same.
-- **Only files uploaded through the app are documents.** Objects already in a
-  bucket are ignored.
-- **Buckets and their items, nothing nested.** Objects sit at the bucket's top
-  level, a dropped folder uploads flat, and tags are the only way to organise.
+- **Files already in a bucket become documents when you scan it.** Each stays
+  at its key; nothing is moved or renamed.
+- **Buckets and their items, nothing nested.** Uploads sit at the bucket's top
+  level, a dropped folder uploads flat, a scanned file's path is shown in its
+  title, and tags are the only way to organise.
 - **Bucket secrets and share URLs are encrypted at rest** with a key derived
   from `BETTER_AUTH_SECRET`, and the API never returns them in full.
 
