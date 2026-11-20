@@ -6,6 +6,7 @@ import { ApiKeySettings } from '@/components/domain/api-key-settings';
 import { LogOut } from '@/components/domain/app-icons';
 import { BucketSettings } from '@/components/domain/bucket-settings';
 import { GeneralSettings } from '@/components/domain/general-settings';
+import { McpSettings } from '@/components/domain/mcp-settings';
 import { ShareLinkSettings } from '@/components/domain/share-link-settings';
 import { SsoSettings } from '@/components/domain/sso-pairing';
 import { LoadState } from '@/components/load-state';
@@ -31,9 +32,9 @@ const SettingsPage = graphql(`
 `);
 
 /**
- * The owner's settings, a tab each: the buckets documents are stored in, every share link, the
- * upload limit and link defaults, how they sign in, the API keys MCP clients use, and how the app
- * looks on this device. The open tab is in the URL
+ * The owner's settings, a tab each: the buckets documents are stored in, every share link, which
+ * buckets agents may reach over MCP, the upload limit and link defaults, how they sign in, the API
+ * keys MCP clients use, and how the app looks on this device. The open tab is in the URL
  * (`?tab=api-keys`); Buckets is first, so `/settings` opens there.
  *
  * @returns The settings page.
@@ -50,7 +51,7 @@ export function SettingsRoute() {
       <PageLayout
         iconSlot={<Settings />}
         title="Settings"
-        description="Where documents are stored, how they are shared, how you sign in, the keys MCP clients use, and how this looks."
+        description="Where documents are stored, how they are shared, which buckets agents may reach, how you sign in, and how this looks."
         width="full"
         headerContentSlot={
           <TabsList aria-label="Settings">
@@ -83,6 +84,10 @@ export function SettingsRoute() {
 
                 <TabsContent value="share-links" className="flex flex-col gap-6">
                   <ShareLinkSettings />
+                </TabsContent>
+
+                <TabsContent value="mcp" className="flex flex-col gap-6">
+                  <McpSettings />
                 </TabsContent>
 
                 <TabsContent value="general" className="flex flex-col gap-6">

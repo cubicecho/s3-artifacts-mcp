@@ -10,6 +10,7 @@ export const SETTINGS_TAB_PARAM = 'tab';
 export const SETTINGS_TABS = [
   { value: 'buckets', label: 'Buckets' },
   { value: 'share-links', label: 'Share links' },
+  { value: 'mcp', label: 'MCP' },
   { value: 'general', label: 'General' },
   { value: 'auth', label: 'Auth' },
   { value: 'api-keys', label: 'API keys' },
