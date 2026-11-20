@@ -86,3 +86,32 @@ export const API_KEY_DEFAULTS: Readonly<ApiKeySettings> = Object.freeze({
   shownCharacters: 8,
   nameMaxLength: 60,
 });
+
+/** Buckets: how they are tested and how many clients are kept built. */
+export interface BucketSettings {
+  /** The object a connection test writes, reads back and deletes. */
+  probeKey: string;
+  /** How long a whole connection test may take before the steps left are skipped. */
+  testTimeoutMs: number;
+  /** How long the test waits on a share link to the probe, within `testTimeoutMs`, so the probe can still be deleted after. */
+  shareLinkTimeoutMs: number;
+  /** How many buckets' S3 clients the storage registry keeps built before dropping the least recently used. */
+  clientCacheSize: number;
+  /** The longest name a bucket may be given, in characters. */
+  nameMaxLength: number;
+  /** The longest slug a bucket may have, in characters. */
+  slugMaxLength: number;
+  /** How long a presigned GET made by the connection test stays valid. */
+  probeLinkTtlSeconds: number;
+}
+
+/** The shipped values of `BucketSettings`. */
+export const BUCKET_DEFAULTS: Readonly<BucketSettings> = Object.freeze({
+  probeKey: '.s3-artifacts-mcp-probe',
+  testTimeoutMs: 10_000,
+  shareLinkTimeoutMs: 4000,
+  clientCacheSize: 32,
+  nameMaxLength: 80,
+  slugMaxLength: 48,
+  probeLinkTtlSeconds: 60,
+});

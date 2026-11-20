@@ -2,6 +2,8 @@ import type { DB } from '@cubicecho/s3-artifacts-mcp-db';
 import type { AuthHost } from '../auth/auth-host.ts';
 import type { Auth } from '../auth/better-auth.ts';
 import type { RateLimiter } from '../auth/rate-limit.ts';
+import type { StorageRegistry } from '../storage/registry.ts';
+import type { SecretBox } from './secrets.ts';
 
 /** `Context.ip` when Express gave no address, as when a test runs an operation in-process. */
 export const UNKNOWN_IP = 'unknown';
@@ -30,4 +32,10 @@ export interface Context {
   origin: string;
   /** Request headers; sign-out needs them to find the session. */
   headers: Headers;
+  /** Every bucket's storage. A bucket write calls `invalidate` on it. */
+  storage: StorageRegistry;
+  /** Seals and opens stored credentials, such as a bucket's secret key. */
+  secrets: SecretBox;
+  /** How the server makes an outbound request of its own, such as the bucket test opening a share link. */
+  fetch: typeof fetch;
 }

@@ -73,9 +73,10 @@ export const SignedOut: Story = {
   },
 };
 
-/** A token: the page, inside the shell with its sidebar. */
+/** A token: the page, inside the shell with its sidebar. Settings' Auth tab, which shows the owner. */
 export const SignedIn: Story = {
   beforeEach: () => setToken(TOKEN),
+  parameters: { router: { initialEntries: [`${ROUTES.documents}?tab=auth`] } },
   play: async ({ canvas }) => {
     await expect(await canvas.findByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
     await expect(await canvas.findByText('owner@example.com')).toBeInTheDocument();

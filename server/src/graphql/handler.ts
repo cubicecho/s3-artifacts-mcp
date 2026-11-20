@@ -5,7 +5,9 @@ import type { AuthHost } from '../auth/auth-host.ts';
 import type { RateLimiter } from '../auth/rate-limit.ts';
 import { appUrl, isProduction } from '../core/config.ts';
 import { type Context, UNKNOWN_IP } from '../core/context.ts';
+import type { SecretBox } from '../core/secrets.ts';
 import { publicOrigin } from '../http/origin.ts';
+import type { StorageRegistry } from '../storage/registry.ts';
 import { createSchema } from './build-schema.ts';
 
 /** What Express hands Yoga alongside the fetch Request. */
@@ -20,18 +22,28 @@ export interface GraphQLOptions {
   /** Hands out the current auth instance, which resolves the session and is passed on to resolvers. */
   authHost: AuthHost;
   limiter: RateLimiter;
+  /** Every bucket's storage. */
+  storage: StorageRegistry;
+  /** Seals and opens stored credentials. */
+  secrets: SecretBox;
+  /** The server's own outbound requests. */
+  fetch: typeof fetch;
 }
 
 /**
  * Builds the Yoga handler for `/graphql`, which resolves the session into each request's context.
  *
- * @param options - The database, the auth host and the sign-in limiter resolvers are handed.
+ * @param options - The database, the auth host, the sign-in limiter, the storage registry, the secret box and
+ *   the outbound fetch resolvers are handed.
  * @returns The Yoga instance, which Express calls as a request handler.
  */
 export function createGraphQLHandler({
   db,
   authHost,
   limiter,
+  storage,
+  secrets,
+  fetch,
 }: GraphQLOptions): YogaServerInstance<ServerContext, Context> {
   const { schema } = createSchema(db);
   return createYoga<ServerContext, Context>({
@@ -55,6 +67,9 @@ export function createGraphQLHandler({
         userId: session?.user.id ?? null,
         origin: req === undefined ? appUrl() : publicOrigin(req),
         headers: request.headers,
+        storage,
+        secrets,
+        fetch,
       };
     },
   });

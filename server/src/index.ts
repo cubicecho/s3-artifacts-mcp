@@ -9,6 +9,7 @@ import { createAuthHost } from './auth/auth-host.ts';
 import { createRateLimiter } from './auth/rate-limit.ts';
 import {
   appUrl,
+  authSecret,
   databaseUrl,
   dbConnectTimeoutMs,
   magicLinkExposed,
@@ -17,8 +18,10 @@ import {
   port,
 } from './core/config.ts';
 import { errorMessage } from './core/errors.ts';
+import { createSecretBox } from './core/secrets.ts';
 import { createApp } from './http/app.ts';
 import { stopOnSignals } from './http/shutdown.ts';
+import { createStorageRegistry } from './storage/registry.ts';
 
 export type { Context } from './core/context.ts';
 
@@ -50,7 +53,9 @@ await migrate(db, { migrationsFolder: join(__dirname, '../../db/drizzle') });
 
 // After migrate: the provider is a pairing, which lives in the database.
 const authHost = await createAuthHost(db);
-const app = createApp({ db, authHost, limiter: createRateLimiter(), staticDir });
+const secrets = createSecretBox(authSecret());
+const storage = createStorageRegistry({ db, secrets });
+const app = createApp({ db, authHost, limiter: createRateLimiter(), storage, secrets, staticDir });
 
 const server = app.listen(PORT, LISTEN_HOST, () => {
   // APP_URL, not localhost: on a NAS the banner is the only place the operator

@@ -4,7 +4,6 @@ import { AppBarItem, Sidebar, SidebarItem, SidebarSection } from '@/components/s
 import { SidebarLayout } from '@/components/split-layout';
 import { Button } from '@/components/ui/button';
 import { FileText, type IconProps, Settings } from '@/components/ui/icons';
-import { ThemePicker } from '@/components/ui/theme-picker';
 import { APP_NAME } from '@/consts';
 import { ROUTES } from '@/lib/routes';
 import { useSignOut } from '@/lib/sign-out';
@@ -117,7 +116,6 @@ export function AppLayout({ contentSlot }: AppLayoutProps) {
               {FOOTER_ITEMS.map((item) => (
                 <RailLink key={item.to} item={item} />
               ))}
-              <ThemePicker variant="compact" />
               <SidebarItem label="Sign out" iconSlot={<LogOut />} onClick={signOut} />
             </>
           }
@@ -126,8 +124,7 @@ export function AppLayout({ contentSlot }: AppLayoutProps) {
       navLabel="Main"
       // The bar has no foot, so every place is an icon in it, Settings included.
       navSlot={NAV_ITEMS.map((item) => <BarLink key={item.to} item={item} />)}
-      // No theme picker in the bar: the compact one is 130px wide and pushes the bar past a 320px
-      // viewport. On a phone the theme is one tap away, on the Settings screen.
+      // The theme is chosen on Settings → Appearance, not in the bar or the sidebar.
       actionSlot={
         <Button aria-label="Sign out" variant="outline" size="icon-sm" iconSlot={<LogOut />} onClick={signOut} />
       }

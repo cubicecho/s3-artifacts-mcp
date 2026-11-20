@@ -10,7 +10,10 @@ import { type Auth, createAuth, type MagicLink } from '../auth/better-auth.ts';
 import { createRateLimiter, type RateLimiter } from '../auth/rate-limit.ts';
 import { appUrl, type OidcConfig } from '../core/config.ts';
 import type { Context } from '../core/context.ts';
+import { createSecretBox, type SecretBox } from '../core/secrets.ts';
 import { createSchema } from '../graphql/build-schema.ts';
+import { createStorageRegistry, type StorageRegistry } from '../storage/registry.ts';
+import { createMemoryBackend, type MemoryBackend } from './memory-storage.ts';
 
 // A throwaway in-memory Postgres per suite. `@cubicecho/s3-artifacts-mcp-db` is
 // deliberately never imported here — it opens a real connection at import time —
@@ -101,12 +104,57 @@ export interface ClientOptions {
   token?: string;
   /** Where the caller reached the instance. Defaults to `appUrl()`. */
   origin?: string;
+  /** The pretend S3 service buckets are stored in. Defaults to a fresh `createMemoryBackend()`. */
+  backend?: MemoryBackend;
+  /** Seals bucket secrets. Defaults to `createTestSecrets()`. */
+  secrets?: SecretBox;
+  /** Every bucket's storage. Defaults to a registry over `backend`. */
+  storage?: StorageRegistry;
+}
+
+/**
+ * The secret box tests seal with, keyed like production from a signing secret.
+ *
+ * @param [masterSecret] - Defaults to `TEST_SECRET`; pass another to play a rotated `BETTER_AUTH_SECRET`.
+ * @returns The box.
+ */
+export function createTestSecrets(masterSecret = TEST_SECRET): SecretBox {
+  return createSecretBox(masterSecret);
+}
+
+/** The bucket dependencies `createApp` takes, over a pretend S3 service. */
+export interface TestStorageDeps {
+  storage: StorageRegistry;
+  secrets: SecretBox;
+  fetch: typeof fetch;
+  /** The pretend service, to put objects in or make an operation fail. */
+  backend: MemoryBackend;
+}
+
+/**
+ * The storage registry, secret box and fetch an app under test is built with.
+ *
+ * @param db - The test database the registry reads bucket rows from.
+ * @returns Them, and the memory backend behind them.
+ */
+export function createTestStorageDeps(db: TestDb): TestStorageDeps {
+  const backend = createMemoryBackend();
+  const secrets = createTestSecrets();
+  return {
+    storage: createStorageRegistry({ db, secrets, factory: backend.factory }),
+    secrets,
+    fetch: backend.fetch,
+    backend,
+  };
 }
 
 export function createClient(db: TestDb, userId: string | null, options: ClientOptions = {}): TestClient {
   const { schema } = createSchema(db);
   const { limiter = createRateLimiter(), ip = TEST_IP, token } = options;
   const authHost = options.authHost ?? fixedAuthHost(options.auth ?? createTestAuth(db).auth);
+  const backend = options.backend ?? createMemoryBackend();
+  const secrets = options.secrets ?? createTestSecrets();
+  const storage = options.storage ?? createStorageRegistry({ db, secrets, factory: backend.factory });
 
   const run = async (query: string, variables?: Record<string, unknown>) => {
     const headers = new Headers(token === undefined ? {} : { authorization: `Bearer ${token}` });
@@ -120,6 +168,9 @@ export function createClient(db: TestDb, userId: string | null, options: ClientO
       userId,
       origin: options.origin ?? appUrl(),
       headers,
+      storage,
+      secrets,
+      fetch: backend.fetch,
     };
     return graphql({ schema, source: query, contextValue, variableValues: variables });
   };

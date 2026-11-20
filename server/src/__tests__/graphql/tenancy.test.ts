@@ -20,7 +20,7 @@ const tableKeys = Object.entries(dbSchema)
 
 describe('tenancy configuration', () => {
   it('finds the tables', () => {
-    expect(tableKeys.sort()).toEqual(['users']);
+    expect(tableKeys.sort()).toEqual(['buckets', 'users']);
   });
 
   it.each(tableKeys)('scopes %s to the caller', (key) => {
@@ -48,11 +48,28 @@ describe('tenancy at runtime', () => {
   let alice: string;
   let bob: string;
 
+  let bobBucket: string;
+
   beforeAll(async () => {
     db = await createTestDb();
     // Two rows, inserted past better-auth's owner gate, so the scope has someone to hide.
     alice = await createUser(db, 'alice@example.com');
     bob = await createUser(db, 'bob@example.com');
+    const [row] = await db
+      .insert(dbSchema.buckets)
+      .values({
+        userId: bob,
+        slug: 'bobs',
+        name: 'Bob’s',
+        provider: 'rustfs',
+        endpoint: 'http://rustfs.lan:9000',
+        region: 'us-east-1',
+        bucket: 'bobs',
+        accessKeyId: 'bob',
+        secretAccessKeyEnc: 'v1.sealed',
+      })
+      .returning({ id: dbSchema.buckets.id });
+    bobBucket = row.id;
   });
 
   afterAll(() => closeTestDb(db));
@@ -68,6 +85,16 @@ describe('tenancy at runtime', () => {
       { id: bob },
     );
     expect(data.users).toEqual([]);
+  });
+
+  it('hides another user’s buckets, even through a filter on their id', async () => {
+    expect((await createClient(db, alice).expectOk('{ buckets { id } }')).buckets).toEqual([]);
+    const filtered = await createClient(db, alice).expectOk(
+      'query ($id: UUID!) { buckets(where: { id: { eq: $id } }) { id } }',
+      { id: bobBucket },
+    );
+    expect(filtered.buckets).toEqual([]);
+    expect((await createClient(db, bob).expectOk('{ buckets { id } }')).buckets).toEqual([{ id: bobBucket }]);
   });
 
   it('refuses the unauthenticated', async () => {

@@ -93,8 +93,7 @@ export const SettingsAtTheFoot: Story = {
 
 /**
  * Phone width. The sidebar is display:none and the same two destinations are icons in a header,
- * with the theme control and sign-out beside them — so nothing reachable on a desktop becomes
- * unreachable here.
+ * with sign-out beside them — so nothing reachable on a desktop becomes unreachable here.
  */
 export const Narrow: Story = {
   args: { contentSlot: <Page title="Documents" /> },
@@ -110,7 +109,7 @@ export const Narrow: Story = {
     await expect(canvas.getByRole('banner')).toBeVisible();
     // One of each, not two: the sidebar's copies are in the DOM and must not be reachable.
     await expect(canvas.getByRole('button', { name: 'Sign out' })).toBeVisible();
-    // The bar carries no theme picker (it does not fit at 320px), and the sidebar's is not laid out.
+    // The theme lives on Settings → Appearance, so neither the bar nor the sidebar has one.
     await expect(canvas.queryByRole('radiogroup', { name: 'Theme' })).not.toBeInTheDocument();
     await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
   },
