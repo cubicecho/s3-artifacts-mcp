@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.2.0...v1.3.0) (2026-11-20)
+
+### Features
+
+* **app:** Settings → MCP, per bucket ([29beafc](https://github.com/cubicecho/s3-artifacts-mcp/commit/29beafc8133d85881d37f0a8e5790cf7f433c503))
+* **server:** an MCP endpoint per bucket ([481b084](https://github.com/cubicecho/s3-artifacts-mcp/commit/481b084ff059353c8ca63bc71a606df0f78e1b91))
+
 # [1.2.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.1.0...v1.2.0) (2026-11-20)
 
 ### Bug Fixes
