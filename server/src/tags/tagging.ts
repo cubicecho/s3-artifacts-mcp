@@ -5,10 +5,12 @@ import { z } from 'zod';
 import { TAG_DEFAULTS } from '../core/defaults.ts';
 import { badInput, notFound } from '../core/errors.ts';
 import { DOCUMENT_NOT_FOUND } from '../documents/rows.ts';
+import { ensureTagsNamed, findTagsNamed } from './names.ts';
 
 // Putting tags on documents and taking them off, for the app's mutations and MCP's tools alike. Every id is checked
 // against the owner first: a tag or a document that is missing, someone else's or not a UUID answers NOT_FOUND, and
-// nothing changes. A link carries the owner's id, as every row does.
+// nothing changes. A link carries the owner's id, as every row does. MCP names tags rather than picking ids, so it
+// tags by name (`tagByName`), making what is missing.
 
 /** The message for a tag that does not exist or is not the caller's, which the caller may not tell apart. */
 export const TAG_NOT_FOUND = 'Tag not found.';
@@ -163,3 +165,45 @@ export async function replaceTags(
   await addTags(db, userId, [documentId], tagIds);
 }
 
+/** Tags to put on a document and to take off it, by name, as an agent names them. */
+export interface TagsByName {
+  /** Names from `parseTagNames`. A missing tag is made. */
+  add?: readonly string[];
+  /** Names from `parseTagNames`. A name no tag has is no matter. */
+  remove?: readonly string[];
+}
+
+/**
+ * Puts tags on a document and takes tags off it by name, in any case, making the tags `add` names that the owner
+ * does not have yet.
+ *
+ * @param db - The database.
+ * @param userId - The owner, whose document this already is.
+ * @param documentId - The document.
+ * @param names - The names to add and to remove.
+ * @throws BAD_USER_INPUT when a name is in both lists.
+ */
+export async function tagByName(db: DB, userId: string, documentId: string, names: TagsByName): Promise<void> {
+  const { add = [], remove = [] } = names;
+  const removing = new Set(remove.map((name) => name.toLowerCase()));
+  const isInBoth = add.some((name) => removing.has(name.toLowerCase()));
+  if (isInBoth) {
+    throw badInput('A tag cannot be added and removed at once.');
+  }
+  const added = await ensureTagsNamed(db, userId, add);
+  const removed = await findTagsNamed(db, userId, remove);
+  await db.transaction(async (tx) => {
+    await addTags(
+      tx,
+      userId,
+      [documentId],
+      added.map((tag) => tag.id),
+    );
+    await removeTags(
+      tx,
+      userId,
+      [documentId],
+      removed.map((tag) => tag.id),
+    );
+  });
+}

@@ -132,15 +132,19 @@ describe.skipIf(isConfigured === false)('an agent shares an artifact over MCP', 
     await closeTestDb(db);
   });
 
-  it('uploads text with a share, and the link opens with no credentials, as asked', async () => {
+  it('uploads text with tags and a share, and the link opens with no credentials, as asked', async () => {
     const text = '# Quarterly report\n\nEverything is fine. Café.\n';
     const result = await ok('upload_document', {
       filename: 'Quarterly report.md',
       contentType: 'text/markdown',
       text,
+      tags: ['Reports', 'q4'],
       share: { permission: 'download', expiresInHours: 1 },
     });
     await rememberKeys();
+    expect(result.document.tags).toEqual(['q4', 'Reports']);
+    const listed = await ok('list_documents', { tags: ['REPORTS', 'Q4'], match: 'all' });
+    expect(listed.documents.map((document: { id: string }) => document.id)).toEqual([result.document.id]);
     const link: ShareLinkResult = result.shareLink;
     expect(new URL(link.url).origin).toBe(new URL(S3AM_IT_ENDPOINT ?? '').origin);
 

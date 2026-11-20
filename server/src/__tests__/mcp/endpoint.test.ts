@@ -6,9 +6,11 @@ import {
   buckets,
   DocumentStatus,
   documents,
+  documentTags,
   type NewDocument,
   ShareLinkCreator,
   shareLinks,
+  tags,
 } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -305,6 +307,8 @@ describe('/mcp/b/:slug', () => {
       'create_upload',
       'get_document',
       'list_documents',
+      'list_tags',
+      'tag_document',
       'upload_document',
     ]);
     for (const name of ['upload_document', 'complete_upload', 'create_share_link']) {
@@ -316,6 +320,7 @@ describe('/mcp/b/:slug', () => {
     expect((await readOnly.listTools()).tools.map((tool) => tool.name).sort()).toEqual([
       'get_document',
       'list_documents',
+      'list_tags',
     ]);
     expect(readOnly.getInstructions()).toContain('read-only');
   });
@@ -436,7 +441,7 @@ describe('/mcp/b/:slug', () => {
     it('refuses every write tool on a read-only bucket', async () => {
       const client = await connect(SLUG.readOnly);
       const before = await db.select().from(documents).where(eq(documents.bucketId, readOnlyId));
-      for (const name of ['upload_document', 'create_upload', 'complete_upload', 'create_share_link']) {
+      for (const name of ['upload_document', 'create_upload', 'complete_upload', 'create_share_link', 'tag_document']) {
         const result = await call(client, name, { filename: 'x.md', contentType: 'text/markdown', text: 'x' });
         expect(result).toMatchObject({ isError: true, text: expect.stringContaining('not found') });
       }
@@ -684,6 +689,146 @@ describe('/mcp/b/:slug', () => {
       });
       const links = await db.select().from(shareLinks).where(eq(shareLinks.documentId, notes.id));
       expect(links).toEqual([]);
+    });
+  });
+
+  describe('tags', () => {
+    /**
+     * Tags a document straight through Drizzle, making the owner's tags it names.
+     *
+     * @param documentId - The document.
+     * @param names - Its tags.
+     */
+    async function tagDirectly(documentId: string, names: readonly string[]) {
+      for (const name of names) {
+        const [tag] = await db
+          .insert(tags)
+          .values({ userId: owner, name, color: '#22c55e' })
+          .onConflictDoNothing()
+          .returning();
+        const [found] = tag === undefined ? await db.select().from(tags).where(eq(tags.name, name)) : [tag];
+        await db.insert(documentTags).values({ documentId, tagId: found.id, userId: owner });
+      }
+    }
+
+    /** The names a listed document answers with, by id. */
+    const tagsOf = (listed: unknown) =>
+      new Map((listed as { id: string; tags: string[] }[]).map((row) => [row.id, row.tags]));
+
+    it('uploads text with tags, reusing a tag of the name in any case and making the rest', async () => {
+      const [existing] = await db.insert(tags).values({ userId: owner, name: 'Reports', color: '#3b82f6' }).returning();
+      const client = await connect(SLUG.writable);
+      const result = await ok(client, 'upload_document', {
+        filename: 'Weekly.md',
+        contentType: 'text/markdown',
+        text: '# Weekly',
+        tags: ['reports', ' Q4 ', 'q4'],
+      });
+      const uploaded = result.document as { id: string; tags: string[] };
+      expect(uploaded.tags).toEqual(['Q4', 'Reports']);
+      const mine = await db.select().from(tags).where(eq(tags.userId, owner));
+      expect(mine.filter((tag) => tag.name.toLowerCase() === 'reports').map((tag) => tag.id)).toEqual([existing.id]);
+      expect(mine.map((tag) => tag.name)).toContain('Q4');
+      const read = await ok(client, 'get_document', { id: uploaded.id });
+      expect((read.document as { tags: string[] }).tags).toEqual(['Q4', 'Reports']);
+    });
+
+    it('refuses a bad tag name before storing anything', async () => {
+      const client = await connect(SLUG.writable);
+      const objects = artifacts.objects.size;
+      const result = await call(client, 'upload_document', {
+        filename: 'Untagged.md',
+        contentType: 'text/markdown',
+        text: 'x',
+        tags: ['   '],
+      });
+      expect(result).toMatchObject({ isError: true, text: expect.stringContaining('needs a name') });
+      expect(artifacts.objects.size).toBe(objects);
+      expect(await db.select().from(documents).where(eq(documents.filename, 'Untagged.md'))).toEqual([]);
+    });
+
+    it('tags a file started with create_upload, and complete_upload answers them', async () => {
+      const client = await connect(SLUG.writable);
+      const body = Buffer.from('%PDF-1.4 tagged');
+      const started = await ok(client, 'create_upload', {
+        filename: 'tagged.pdf',
+        contentType: 'application/pdf',
+        size: body.length,
+        tags: ['Scans'],
+      });
+      const put = await deps.fetch(String(started.uploadUrl), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/pdf' },
+        body,
+      });
+      expect(put.status).toBe(HttpStatus.Ok);
+      const done = await ok(client, 'complete_upload', { documentId: started.documentId });
+      expect((done.document as { tags: string[] }).tags).toEqual(['Scans']);
+    });
+
+    it('lists by tag, any or all, and never a tagged document elsewhere', async () => {
+      const client = await connect(SLUG.writable);
+      const both = await document(writableId, 'artifacts', { filename: 'both.txt' });
+      const oneOnly = await document(writableId, 'artifacts', { filename: 'one.txt' });
+      const elsewhere = await document(readOnlyId, 'notes', { filename: 'elsewhere.txt' });
+      await tagDirectly(both.id, ['alpha', 'beta']);
+      await tagDirectly(oneOnly.id, ['alpha']);
+      await tagDirectly(elsewhere.id, ['beta']);
+
+      const any = await ok(client, 'list_documents', { tags: ['ALPHA', 'beta'] });
+      const anyTags = tagsOf(any.documents);
+      expect([...anyTags.keys()].sort()).toEqual([both.id, oneOnly.id].sort());
+      expect(anyTags.get(both.id)).toEqual(['alpha', 'beta']);
+
+      const all = await ok(client, 'list_documents', { tags: ['alpha', 'Beta'], match: 'all' });
+      expect([...tagsOf(all.documents).keys()]).toEqual([both.id]);
+      const none = await ok(client, 'list_documents', { tags: ['alpha', 'nobody'], match: 'all' });
+      expect(none.documents).toEqual([]);
+      // Untagged documents answer an empty list rather than leaving the field out.
+      const listed = await ok(client, 'list_documents', { title: 'Mine' });
+      for (const row of listed.documents as { tags: string[] }[]) {
+        expect(row.tags).toEqual(expect.any(Array));
+      }
+    });
+
+    it('lists every tag of the owner’s with how many documents here carry it', async () => {
+      const client = await connect(SLUG.readOnly);
+      const here = await document(readOnlyId, 'notes', { filename: 'counted.txt' });
+      const pending = await document(readOnlyId, 'notes', {
+        filename: 'pending.txt',
+        status: DocumentStatus.PendingUpload,
+      });
+      await tagDirectly(here.id, ['counted-here']);
+      await tagDirectly(pending.id, ['counted-here']);
+      const away = await document(writableId, 'artifacts', { filename: 'away.txt' });
+      await tagDirectly(away.id, ['only-elsewhere']);
+
+      const { tags: listed } = await ok(client, 'list_tags');
+      const byName = new Map((listed as { name: string; documents: number }[]).map((tag) => [tag.name, tag]));
+      expect(byName.get('counted-here')).toMatchObject({ documents: 1, color: '#22c55e' });
+      expect(byName.get('only-elsewhere')).toMatchObject({ documents: 0 });
+      const otherTags = await db.select().from(tags).where(eq(tags.userId, owner));
+      expect(listed).toHaveLength(otherTags.length);
+    });
+
+    it('adds and removes tags by name, and touches nothing outside the bucket', async () => {
+      const client = await connect(SLUG.writable);
+      const mine = await document(writableId, 'artifacts', { filename: 'retag.txt' });
+      const notes = await document(readOnlyId, 'notes', { filename: 'not-here.txt' });
+      await tagDirectly(mine.id, ['draft']);
+
+      const result = await ok(client, 'tag_document', {
+        id: mine.id,
+        add: ['Final', 'final'],
+        remove: ['DRAFT', 'never'],
+      });
+      expect((result.document as { tags: string[] }).tags).toEqual(['Final']);
+      const both = await call(client, 'tag_document', { id: mine.id, add: ['x'], remove: ['X'] });
+      expect(both).toMatchObject({ isError: true, text: expect.stringContaining('added and removed') });
+
+      const elsewhere = await call(client, 'tag_document', { id: notes.id, add: ['Final'] });
+      expect(elsewhere).toMatchObject({ isError: true, text: NO_SUCH_DOCUMENT });
+      expect(await db.select().from(documentTags).where(eq(documentTags.documentId, notes.id))).toEqual([]);
     });
   });
 });
