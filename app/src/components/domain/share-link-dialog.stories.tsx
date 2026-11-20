@@ -143,7 +143,8 @@ export const Narrow: Story = {
   play: async ({ canvasElement }) => {
     const dialog = await dialogOf(canvasElement, /Share/);
     await userEvent.click(dialog.getByRole('button', { name: 'Custom' }));
-    await expect(dialog.getByRole('button', { name: 'Make link' })).toBeVisible();
+    // The dialog fades in; on a slow machine it may still be at opacity 0 here.
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Make link' })).toBeVisible());
     const root = canvasElement.ownerDocument.documentElement;
     await expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
   },
