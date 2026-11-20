@@ -4,8 +4,9 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 // The app talks to a relative /graphql, proxied here in dev so the token never
-// crosses origins. /sso and /api/auth are the two legs of an OIDC sign-in,
-// which the server answers over plain HTTP. In production the server serves dist/ from the same origin.
+// crosses origins. /sso and /api/auth are the two legs of an OIDC sign-in, and
+// /api/documents is where a document's bytes go up and come back down; the server
+// answers all of /api over plain HTTP. In production the server serves dist/ from the same origin.
 // Point S3AM_SERVER_URL elsewhere to develop against a remote server.
 const SERVER_URL = process.env.S3AM_SERVER_URL ?? 'http://localhost:3005';
 
@@ -26,7 +27,7 @@ export default defineConfig({
     proxy: {
       '/graphql': SERVER_URL,
       '/sso': SERVER_URL,
-      '/api/auth': SERVER_URL,
+      '/api': SERVER_URL,
     },
   },
   preview: LISTEN,

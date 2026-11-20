@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { users } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type AuthHost, createAuthHost } from '../../auth/auth-host.ts';
@@ -149,9 +150,20 @@ async function pairError(url: string, userId: string | null = null) {
   return { message: error?.message, ...error?.extensions };
 }
 
-/** The instance's first account, which owns it. Made before any other in the test. */
-function makeOwner(email: string): Promise<string> {
-  return createUser(db, email);
+/** How far before "now" the owner signed up, so no account made later in a test can tie with it. */
+const OWNER_HEAD_START_MS = 60_000;
+
+/**
+ * The instance's first account, which owns it. The owner is the oldest account, and a row's
+ * `created_at` is `now()`, which can be the same for two inserts in quick succession; the tie
+ * would then go to whichever random id sorts first. So it is dated a minute back.
+ */
+async function makeOwner(email: string): Promise<string> {
+  const [owner] = await db
+    .insert(users)
+    .values({ email, createdAt: new Date(Date.now() - OWNER_HEAD_START_MS) })
+    .returning({ id: users.id });
+  return owner.id;
 }
 
 describe('setup URLs', () => {

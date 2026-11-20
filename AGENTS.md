@@ -14,9 +14,9 @@ needs. The agreed design is [`.agents/plan.md`](.agents/plan.md). Read it
 before adding a feature: it has the data model, the GraphQL surface, the MCP
 tools and the build order.
 
-**Where the build is:** step 1 of the plan (scaffold). Sign-in, API keys,
-health and the settings shell exist. Buckets, documents, share links, MCP and
-tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
+**Where the build is:** step 3 of the plan (documents). Sign-in, API keys,
+health, settings, buckets, and documents (upload, preview, rename, delete, the
+bucket tree) exist. Share links, MCP and tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
 Don't write code or docs as if they exist.
 
 ## Skills to load
@@ -47,7 +47,7 @@ As Engrafo, minus OCR, pgvector and the embedding model.
 | API | graphql-yoga 5 on Express 5, drizzle-graphql generated schema + SDL extensions |
 | Database | Drizzle `1.0.0-rc.5` + PostgreSQL (`postgres-js`); PGlite in tests only |
 | Auth | better-auth (magic link, OIDC pairing, api-key plugin), `@cubicecho/graphql-better-auth` |
-| Storage (planned) | `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, `@aws-sdk/s3-request-presigner` |
+| Storage | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` (`@aws-sdk/lib-storage` arrives with uploads in step 3) |
 | MCP (planned) | `@modelcontextprotocol/sdk`, stateless Streamable HTTP |
 | Testing | Vitest (node on PGlite, dom), Storybook + Playwright |
 | Tooling | Biome, Node 26 ESM with no server build, semantic-release, Docker (`node:26-slim`) |
@@ -57,7 +57,7 @@ Packages: `@cubicecho/s3-artifacts-mcp-app`, `@cubicecho/s3-artifacts-mcp-server
 
 ## Project structure
 
-As of step 1. The folders later steps add are in the plan's "Layout".
+As of step 3. The folders later steps add are in the plan's "Layout".
 
 ```
 s3-artifacts-mcp/
@@ -70,25 +70,29 @@ s3-artifacts-mcp/
 │       │   ├── ui/          # cubeui primitives: vendored, not linted
 │       │   ├── *.tsx        # cubeui shells (PageLayout, CardLayout, SidebarLayout, LoadState, …)
 │       │   ├── layouts/     # app-layout (the sidebar shell around every signed-in page), require-auth
-│       │   └── domain/      # sso-pairing, create-api-key-dialog, the API key settings
-│       ├── routes/          # login, verify, sso, settings (Sign-in, API keys), documents (placeholder)
-│       ├── lib/             # apollo, auth, page, cn()
+│       │   └── domain/      # bucket-tree, bucket-sidebar, upload-panel, upload-dialog, document-preview-card, document-details-card,
+│       │                    #   rename-document-dialog, bucket-settings, bucket-form-dialog, bucket-secret-dialog, bucket-test-report, sso-pairing, api-key-settings
+│       ├── routes/          # login, verify, sso, settings (Buckets, Auth, API keys, Appearance), documents (/), document (/documents/:id)
+│       ├── lib/             # apollo, auth, library (the tree's and list's one query), upload, content-url, page, cn()
 │       └── main.tsx         # Providers + the router
 ├── server/                  # GraphQL API (port 3005)
 │   ├── __generated__/       # Generated SDL (not committed)
 │   └── src/
 │       ├── index.ts         # Boot only: preflight, wait for Postgres, migrate, createApp, listen, stop on a signal
-│       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env
-│       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs)
-│       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema
+│       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env, secrets
+│       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs), content (/api routes)
+│       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema, docs, parent-id
 │       ├── auth/            # better-auth (with the owner gate), auth-host, admin, rate-limit, resolvers
 │       ├── sso/             # Pairing an OIDC provider from a setup URL: settings, pairing (RFC 7591/7592), resolvers
 │       ├── api-keys/        # resolvers: list, make and revoke the caller's API keys
+│       ├── buckets/         # presets, input (validation, slugs), test (the connection probe), sdl, resolvers
+│       ├── storage/         # storage (the Storage interface), s3 (one bucket), registry (all of them)
+│       ├── documents/       # keys, create, scan, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
 │       └── __tests__/       # Server tests, in the same folders as src; helpers.ts at the root
 ├── db/
 │   ├── drizzle/             # Generated migrations (committed)
 │   └── src/
-│       ├── models/          # auth (better-auth's tables), users, oidc-settings
+│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets, documents
 │       ├── schema.ts        # Every model
 │       ├── relations.ts     # defineRelations config (drives the GraphQL schema)
 │       ├── defaults.ts      # DATABASE_DEFAULTS
@@ -138,7 +142,7 @@ what is about the network.** Everything else is a setting in the UI.
 | Var | Why it is in env |
 |---|---|
 | `DATABASE_URL` | Settings live in the database. |
-| `BETTER_AUTH_SECRET` | Signs sessions. From step 2 it also derives the key bucket secrets and share URLs are encrypted with. |
+| `BETTER_AUTH_SECRET` | Signs sessions, and derives the key bucket secrets (later share URLs) are encrypted with. Rotating it makes every stored bucket secret unreadable; Settings then asks for each again. |
 | `APP_URL` (optional) | Magic-link and OIDC redirect URLs. |
 | `PORT` (optional) | Listening port. |
 | `TRUST_PROXY` (optional) | The sign-in throttle needs it before anyone is signed in. |
@@ -171,9 +175,10 @@ The rules are in `cubicecho_backend` → `schema.md`. What is particular here:
   must declare it too, or a variable will not typecheck against it.
 - **Tables kept out of the schema** are excluded in `build-schema.ts`:
   better-auth's (`sessions`, `accounts`, `verifications`, `apikeys`) and
-  `oidc_settings`, which holds client secrets. A planned table with a secret
-  column excludes that column (`buckets.secret_access_key_enc`,
-  `share_links.url_enc`).
+  `oidc_settings`, which holds client secrets. A table with a secret column
+  excludes that column: `buckets.secret_access_key_enc` now, `share_links.url_enc`
+  in step 4. Mutations that return such a row build it with drizzle-graphql's
+  `resolveSelection`, so the column cannot leak through a hand-written path.
 
 ## Rules that carry weight
 
@@ -217,7 +222,7 @@ for speed or for tests: tests run on PGlite.
 
 **OIDC comes only from pairing in the UI.** There are no `OIDC_*` env vars and
 no `effectiveOidc` override. A setup URL (`<issuer>#setup=<token>&name=<name>`)
-is pasted on the login page while there are no users, or in Settings → Sign-in
+is pasted on the login page while there are no users, or in Settings → Auth
 by the owner after that. `sso/pairing.ts` registers the app by Dynamic Client
 Registration (RFC 7591) and keeps the client in `oidc_settings`. Unpairing
 deletes it at the provider (RFC 7592) and forgets the row even when the provider
@@ -309,8 +314,95 @@ body only with the `page` and `prose` columns, so every full-width page passes
 
 **Settings sections are tabs in the query string** (`?tab=`), a `Link` per tab,
 so a section can be linked and survives a reload. An unknown tab opens the
-first. Step 1 has Sign-in and API keys; the plan adds Buckets, Share links, MCP
-and General.
+first. The tabs are Buckets, Auth, API keys and Appearance; the plan adds Share
+links, MCP and General. Link to one with `settingsLink(tab)`. **The theme is
+chosen only on Appearance** (the card picker); the sidebar, the bar and page
+headers carry no theme picker. The sign-in pages keep their compact one, since
+nobody signed out can reach Settings.
+
+**Buckets are rows, each with its own connection.** One instance mixes
+accounts and providers (AWS S3, MinIO, RustFS, Backblaze B2 side by side).
+Providers are only presets (`buckets/presets.ts`) that fill the form; there is
+no Cloudflare R2 preset. Rules that are easy to break:
+
+- **Secrets are sealed** by `core/secrets.ts` (AES-256-GCM, key from
+  `BETTER_AUTH_SECRET` by HKDF, a purpose bound in as AAD) and never returned.
+  A secret that no longer opens is `Bucket.secretReadable: false`, not a crash.
+- **The `StorageRegistry` caches by bucket id only**, never by provider or
+  endpoint, and every bucket write calls `invalidate`. It is injected through
+  `createApp` and read from the context, so tests hand in the in-memory backend
+  (`__tests__/memory-storage.ts`).
+- **Two clients per bucket**, because a signature covers the host: `endpoint`
+  for the server, `public_endpoint` for signing share links.
+- **Clients send checksums only when required**
+  (`requestChecksumCalculation` / `responseChecksumValidation` =
+  `WHEN_REQUIRED`). The SDK's default flexible checksums are refused by B2 and
+  older MinIO. For the same reason a single-key delete is `DeleteObject`, not
+  `DeleteObjects`.
+- **`testBucket` runs before every save** that changes the connection: head
+  bucket, put, get, share link (presign on `public_endpoint` and fetch), delete.
+  A failure before the share link refuses the save with `BAD_USER_INPUT` and
+  `extensions { reason, step, errorCode }`. The share-link step is only a
+  warning. The delete always runs once the put passed, so a probe is never left
+  behind.
+- **Slugs are unique across the instance**, because they name the MCP endpoint.
+  A taken slug is `CONFLICT`, including when two saves race for it.
+- **There is no default bucket.** Every upload names its bucket: an MCP
+  client by its endpoint (`/mcp/b/:slug`), the app by the bucket the owner
+  picks. Don't add one back to save the app a choice; the upload panel
+  preselects instead (the bucket open in the tree, the only one, or the last
+  used, remembered in the browser).
+
+**A document is `pending_upload` until its bytes are in the bucket.**
+`createDocumentUpload` makes the row; `PUT /api/documents/:id/content` streams
+the body through lib-storage, counting and hashing it, and only a body of
+exactly the declared size becomes `ready` (sha256 set, in one transaction
+guarded on `pending_upload`). Any other ending (short, long, storage failure,
+client gone) aborts the multipart upload and deletes the object and the row.
+The sweeper (`documents/sweep.ts`, started only in `index.ts`) drops pending
+rows idle past `UPLOAD_DEFAULTS.pendingTtlMinutes`. Lists show `ready` only.
+Object keys are `<uuid>-<ascii filename>` at the bucket's top level.
+
+**A scan makes the files already in a bucket documents, where they are.**
+`scanBucket` (`documents/scan.ts`) lists the bucket a page at a time and adds
+a `ready` row for each key no document has: filename is the key's last
+segment, title the key without its extension, type guessed by `mrmime`, no
+sha256. It never reads, moves or renames an object. Folder markers (`…/`) and
+the bucket test's probe are passed over; a key with control characters or a
+too-long name is skipped and reported. The unique `(bucket_id, object_key)`
+index with `ON CONFLICT DO NOTHING` makes a repeat or a racing scan add
+nothing twice. One scan adds at most `SCAN_DEFAULTS.maxImports`, then says
+`truncated`; the next carries on. A key with a `/` in it is still shown flat
+(D11). Deleting a scanned document deletes the owner's object, as for any
+document.
+
+**The content routes are same-origin and must stay safe as such.**
+`/api/documents/:id/content` is served from the app's own origin, so an
+uploaded file could otherwise run script as the app:
+
+- `PUT` takes only a session bearer header (no cookies, no API keys). `GET`
+  takes the bearer header or a `?t=` from `Document.contentUrl`, because
+  `<img>`, `<iframe>` and `<video>` cannot send headers. `t` is an HMAC over
+  id, object key, download flag and expiry (15 minutes), keyed by HKDF from
+  `BETTER_AUTH_SECRET`. Any bad, stale or foreign token is 404, never 401/403.
+- Every response has `nosniff`; everything but passive inline types (non-SVG
+  images, audio, video, PDF, plain text) gets `Content-Security-Policy:
+  sandbox`. Don't widen that list. The app never renders uploaded HTML.
+- No CORS headers on `/api`, ever.
+
+**A field added to a generated type needs `id` in the query.** drizzle-graphql
+adds the primary key only when a query names no column, so `Bucket.secretReadable`
+and `Document.contentUrl` read it through `parentIdOf` (`graphql/parent-id.ts`),
+which answers BAD_USER_INPUT, not NOT_FOUND, when it is missing. Use it for any
+new added field, and always select `id` in the app.
+
+**The bucket tree starts collapsed and stays the owner's.** `bucket-tree` passes
+`defaultOpen={[]}` to cubeui's `FileTree` (whose default is `"all"`). Nothing
+opens a bucket but a press: not a reload, an upload, or a document page. A
+bucket the owner opened stays open through a refetch. Expansion is not saved.
+Stories cover all three. The tree and the documents list share the `Library`
+query; anything that adds or removes a bucket or document refetches it
+(`LIBRARY_QUERIES`).
 
 **`app/src/components/ui/` is vendored** from the cubeui registry and kept as
 published, so `shadcn add` can update it. `biome.json` turns lint and format off
@@ -330,22 +422,6 @@ too.
 None of this exists yet. When you build a step, move its rules up into "Rules
 that carry weight" and the structure tree, and delete them here.
 
-- **Buckets (step 2).** Managed by the owner in Settings, with S3, MinIO and
-  RustFS presets. Secrets are encrypted at rest (AES-256-GCM, key from
-  `BETTER_AUTH_SECRET` by HKDF) and never returned in full. A `StorageRegistry`
-  is injected through `createApp`. Each bucket gets two clients, because a
-  signature covers the host: `endpoint` for the server, `public_endpoint` for
-  signing. `testBucket` runs before every save.
-- **Documents (step 3).** A document is created `pending_upload` before its
-  bytes exist. The app's uploads and downloads stream through the server
-  (`/api/documents/:id/content`), so the app needs no bucket CORS. Object keys
-  are `<objectId>-<sanitized filename>` at the bucket's top level. There are no
-  folders.
-- **The bucket tree (step 3).** Engrafo's archive tree becomes `bucket-tree`,
-  two levels (bucket → item), mounted on every signed-in page. **It starts
-  collapsed:** pass `defaultOpen={[]}` to cubeui's `FileTree`, whose default is
-  `"all"`. Nothing opens on its own, and expansion is not saved. A story covers
-  the collapsed first render.
 - **Share links (step 4).** Presigned GETs on the bucket's `public_endpoint`,
   stored encrypted. Expiry is capped at 7 days (SigV4's maximum). A single link
   cannot be revoked; `rekeyDocument` revokes them all. `app_settings` arrives

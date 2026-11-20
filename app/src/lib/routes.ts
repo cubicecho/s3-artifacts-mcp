@@ -7,6 +7,8 @@
 export const ROUTES = Object.freeze({
   /** The documents, across every bucket. */
   documents: '/',
+  /** One document. Build a link to it with {@link documentPath}. */
+  document: '/documents/:id',
   settings: '/settings',
   login: '/login',
   /** Where a magic link lands, carrying its token in the query string. */
@@ -14,3 +16,26 @@ export const ROUTES = Object.freeze({
   /** Where an OIDC sign-in lands, carrying a one-time token the server's callback minted. */
   sso: '/auth/sso',
 });
+
+/** The query-string key the documents page filters by: a bucket's slug. */
+export const BUCKET_FILTER_PARAM = 'bucket';
+
+/**
+ * Where one document's page is.
+ *
+ * @param id - The document's id.
+ * @returns The path to its page.
+ */
+export function documentPath(id: string): string {
+  return ROUTES.document.replace(':id', encodeURIComponent(id));
+}
+
+/**
+ * The documents page, filtered to one bucket.
+ *
+ * @param slug - The bucket's slug.
+ * @returns The path, with the bucket in the query string.
+ */
+export function bucketDocumentsPath(slug: string): string {
+  return `${ROUTES.documents}?${new URLSearchParams({ [BUCKET_FILTER_PARAM]: slug })}`;
+}

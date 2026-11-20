@@ -4,6 +4,7 @@ import { graphql } from '@/__generated__';
 import { CardLayout } from '@/components/card-layout';
 import { ApiKeySettings } from '@/components/domain/api-key-settings';
 import { LogOut } from '@/components/domain/app-icons';
+import { BucketSettings } from '@/components/domain/bucket-settings';
 import { SsoSettings } from '@/components/domain/sso-pairing';
 import { LoadState } from '@/components/load-state';
 import { PageLayout } from '@/components/page-layout';
@@ -14,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ThemePicker } from '@/components/ui/theme-picker';
 import { FULL_WIDTH_BODY } from '@/lib/page';
 import { queryLike } from '@/lib/query';
+import { ROUTES } from '@/lib/routes';
 import { useSignOut } from '@/lib/sign-out';
 import { cn } from '@/lib/utils';
 
@@ -31,8 +33,10 @@ export const SETTINGS_TAB_PARAM = 'tab';
 
 /** The tabs, in order. The first is where an absent or unknown `?tab=` lands. */
 export const SETTINGS_TABS = [
-  { value: 'sign-in', label: 'Sign-in' },
+  { value: 'buckets', label: 'Buckets' },
+  { value: 'auth', label: 'Auth' },
   { value: 'api-keys', label: 'API keys' },
+  { value: 'appearance', label: 'Appearance' },
 ] as const;
 
 export type SettingsTab = (typeof SETTINGS_TABS)[number]['value'];
@@ -58,8 +62,19 @@ function tabSearch(tab: SettingsTab): string {
 }
 
 /**
- * The owner's settings, a tab each: how they sign in, and the API keys MCP clients use. The theme
- * is in the header, on every tab. The open tab is in the URL (`?tab=api-keys`).
+ * A link to one tab of this page, for a page elsewhere that sends the reader here.
+ *
+ * @param tab - The tab to open.
+ * @returns The path and query string.
+ */
+export function settingsLink(tab: SettingsTab): string {
+  return `${ROUTES.settings}${tabSearch(tab)}`;
+}
+
+/**
+ * The owner's settings, a tab each: the buckets documents are stored in, how they sign in, the
+ * API keys MCP clients use, and how the app looks on this device. The open tab is in the URL
+ * (`?tab=api-keys`); Buckets is first, so `/settings` opens there.
  *
  * @returns The settings page.
  */
@@ -75,9 +90,8 @@ export function SettingsRoute() {
       <PageLayout
         iconSlot={<Settings />}
         title="Settings"
-        description="How you sign in, and the keys MCP clients use."
+        description="Where documents are stored, how you sign in, the keys MCP clients use, and how this looks."
         width="full"
-        actionSlot={<ThemePicker variant="compact" />}
         headerContentSlot={
           <TabsList aria-label="Settings">
             {SETTINGS_TABS.map((entry) => (
@@ -103,7 +117,11 @@ export function SettingsRoute() {
 
             {data && (
               <>
-                <TabsContent value="sign-in" className="flex flex-col gap-6">
+                <TabsContent value="buckets" className="flex flex-col gap-6">
+                  <BucketSettings />
+                </TabsContent>
+
+                <TabsContent value="auth" className="flex flex-col gap-6">
                   <CardLayout
                     level={2}
                     title="Account"
@@ -118,6 +136,15 @@ export function SettingsRoute() {
 
                 <TabsContent value="api-keys" className="flex flex-col gap-6">
                   <ApiKeySettings />
+                </TabsContent>
+
+                <TabsContent value="appearance" className="flex flex-col gap-6">
+                  <CardLayout
+                    level={2}
+                    title="Theme"
+                    description="Light, dark, or whatever this device is set to. Kept in this browser only."
+                    contentSlot={<ThemePicker />}
+                  />
                 </TabsContent>
               </>
             )}

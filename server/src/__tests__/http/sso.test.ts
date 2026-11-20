@@ -23,6 +23,7 @@ import {
   createClient,
   createTestAuth,
   createTestDb,
+  createTestStorageDeps,
   createUser,
   sessionUserId,
   type TestDb,
@@ -185,6 +186,7 @@ async function startApp({ setAppUrl }: { setAppUrl: boolean }): Promise<void> {
       db,
       authHost,
       limiter: createRateLimiter(),
+      ...createTestStorageDeps(db),
       staticDir,
     }),
   );

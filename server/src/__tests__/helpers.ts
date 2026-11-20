@@ -3,6 +3,7 @@ import { relations } from '@cubicecho/s3-artifacts-mcp-db/relations';
 import * as dbSchema from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { PGlite } from '@electric-sql/pglite';
 import { pushSchema } from 'drizzle-kit/api-postgres';
+import { getTableName, is, sql, Table } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/pglite';
 import { type ExecutionResult, graphql } from 'graphql';
 import { type AuthHost, fixedAuthHost } from '../auth/auth-host.ts';
@@ -10,7 +11,10 @@ import { type Auth, createAuth, type MagicLink } from '../auth/better-auth.ts';
 import { createRateLimiter, type RateLimiter } from '../auth/rate-limit.ts';
 import { appUrl, type OidcConfig } from '../core/config.ts';
 import type { Context } from '../core/context.ts';
+import { createSecretBox, type SecretBox, SecretPurpose } from '../core/secrets.ts';
 import { createSchema } from '../graphql/build-schema.ts';
+import { createStorageRegistry, type StorageRegistry } from '../storage/registry.ts';
+import { createMemoryBackend, type MemoryBackend } from './memory-storage.ts';
 
 // A throwaway in-memory Postgres per suite. `@cubicecho/s3-artifacts-mcp-db` is
 // deliberately never imported here — it opens a real connection at import time —
@@ -29,6 +33,20 @@ export async function createTestDb(): Promise<TestDb> {
   const { apply } = await pushSchema(dbSchema as never, db as never);
   await apply();
   return db;
+}
+
+/** Every table in the schema, quoted for a statement that names them all. */
+const TABLE_LIST = Object.values(dbSchema)
+  .flatMap((value) => (is(value, Table) ? [`"${getTableName(value)}"`] : []))
+  .join(', ');
+
+/**
+ * Empties every table, so the next test starts from the db `createTestDb` returned. Cheaper than a new one.
+ *
+ * @param db - Test db.
+ */
+export async function resetTestDb(db: TestDb): Promise<void> {
+  await db.execute(sql.raw(`TRUNCATE TABLE ${TABLE_LIST} RESTART IDENTITY CASCADE`));
 }
 
 /**
@@ -72,6 +90,57 @@ export function createTestAuth(db: TestDb, oidc: OidcConfig | null = null): Test
   return { auth, links };
 }
 
+/**
+ * Opens a session for a user straight through better-auth's adapter, as a sign-in would, for a request that
+ * sends it as `Authorization: Bearer`.
+ *
+ * @param auth - The auth instance the server under test reads sessions with.
+ * @param userId - Who signs in.
+ * @returns The session token.
+ */
+export async function createSessionToken(auth: Auth, userId: string): Promise<string> {
+  const session = await (await auth.$context).internalAdapter.createSession(userId);
+  return session.token;
+}
+
+/** The secret every test bucket is sealed with, as the dev RustFS's. */
+export const TEST_BUCKET_SECRET = 's3am-dev-secret';
+
+/**
+ * Inserts a bucket row straight through Drizzle, its secret sealed with `secrets`. The connection test is not
+ * what is under test.
+ *
+ * @param db - Test db.
+ * @param secrets - Seals the secret.
+ * @param userId - Whose bucket it is.
+ * @param [overrides] - Columns to change, such as `bucket` to put it in another memory bucket.
+ * @returns The bucket's id.
+ */
+export async function insertBucket(
+  db: TestDb,
+  secrets: SecretBox,
+  userId: string,
+  overrides: Partial<dbSchema.NewBucket> = {},
+): Promise<string> {
+  const [row] = await db
+    .insert(dbSchema.buckets)
+    .values({
+      userId,
+      slug: `bucket-${Math.random().toString(36).slice(2, 10)}`,
+      name: 'Artifacts',
+      provider: 'rustfs',
+      endpoint: 'http://rustfs.test:9000',
+      region: 'us-east-1',
+      bucket: 'artifacts',
+      accessKeyId: 's3am',
+      secretAccessKeyEnc: secrets.seal(TEST_BUCKET_SECRET, SecretPurpose.BucketSecret),
+      forcePathStyle: true,
+      ...overrides,
+    })
+    .returning({ id: dbSchema.buckets.id });
+  return row.id;
+}
+
 /** Who a session token signs in as, through the same call a request's context makes. */
 export async function sessionUserId(auth: Auth, token: string): Promise<string | null> {
   const session = await auth.api.getSession({ headers: new Headers({ authorization: `Bearer ${token}` }) });
@@ -101,12 +170,57 @@ export interface ClientOptions {
   token?: string;
   /** Where the caller reached the instance. Defaults to `appUrl()`. */
   origin?: string;
+  /** The pretend S3 service buckets are stored in. Defaults to a fresh `createMemoryBackend()`. */
+  backend?: MemoryBackend;
+  /** Seals bucket secrets. Defaults to `createTestSecrets()`. */
+  secrets?: SecretBox;
+  /** Every bucket's storage. Defaults to a registry over `backend`. */
+  storage?: StorageRegistry;
+}
+
+/**
+ * The secret box tests seal with, keyed like production from a signing secret.
+ *
+ * @param [masterSecret] - Defaults to `TEST_SECRET`; pass another to play a rotated `BETTER_AUTH_SECRET`.
+ * @returns The box.
+ */
+export function createTestSecrets(masterSecret = TEST_SECRET): SecretBox {
+  return createSecretBox(masterSecret);
+}
+
+/** The bucket dependencies `createApp` takes, over a pretend S3 service. */
+export interface TestStorageDeps {
+  storage: StorageRegistry;
+  secrets: SecretBox;
+  fetch: typeof fetch;
+  /** The pretend service, to put objects in or make an operation fail. */
+  backend: MemoryBackend;
+}
+
+/**
+ * The storage registry, secret box and fetch an app under test is built with.
+ *
+ * @param db - The test database the registry reads bucket rows from.
+ * @returns Them, and the memory backend behind them.
+ */
+export function createTestStorageDeps(db: TestDb): TestStorageDeps {
+  const backend = createMemoryBackend();
+  const secrets = createTestSecrets();
+  return {
+    storage: createStorageRegistry({ db, secrets, factory: backend.factory }),
+    secrets,
+    fetch: backend.fetch,
+    backend,
+  };
 }
 
 export function createClient(db: TestDb, userId: string | null, options: ClientOptions = {}): TestClient {
   const { schema } = createSchema(db);
   const { limiter = createRateLimiter(), ip = TEST_IP, token } = options;
   const authHost = options.authHost ?? fixedAuthHost(options.auth ?? createTestAuth(db).auth);
+  const backend = options.backend ?? createMemoryBackend();
+  const secrets = options.secrets ?? createTestSecrets();
+  const storage = options.storage ?? createStorageRegistry({ db, secrets, factory: backend.factory });
 
   const run = async (query: string, variables?: Record<string, unknown>) => {
     const headers = new Headers(token === undefined ? {} : { authorization: `Bearer ${token}` });
@@ -120,6 +234,9 @@ export function createClient(db: TestDb, userId: string | null, options: ClientO
       userId,
       origin: options.origin ?? appUrl(),
       headers,
+      storage,
+      secrets,
+      fetch: backend.fetch,
     };
     return graphql({ schema, source: query, contextValue, variableValues: variables });
   };

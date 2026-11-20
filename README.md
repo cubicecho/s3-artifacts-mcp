@@ -9,16 +9,28 @@ small, self-hosted store in between. It keeps the documents' metadata in
 Postgres, the bytes in buckets you configure, and gives each bucket its own MCP
 endpoint.
 
-> **Status: early.** This is step 1 of [the plan](.agents/plan.md): sign-in,
-> API keys and the settings shell. Everything marked *planned* below is
+> **Status: early.** This is step 3 of [the plan](.agents/plan.md): sign-in,
+> API keys, settings, buckets and documents. Everything marked *planned* below is
 > designed but not built yet.
 
 ## What it does
 
-- **Several buckets** *(planned)*: AWS S3, MinIO or RustFS, added and tested in
-  Settings. Any of them can receive uploads, and one is the default.
-- **Upload** *(planned)*: from the app (a batch of files, each with its own
-  progress bar) or from an agent over MCP.
+- **Several buckets, on several accounts**: AWS S3, MinIO, RustFS and
+  Backblaze B2 side by side, each with its own endpoint and keys, added and
+  tested in Settings. Any of them can receive uploads. There is
+  no default bucket: every upload says which bucket it goes to.
+- **Upload**: from the app, a batch of files (a dropped folder uploads flat),
+  each with its own progress bar, up to 100 MiB each for now. From an agent
+  over MCP *(planned)*.
+- **Scan a bucket** for the files already in it, put there by anything else:
+  each becomes a document where it is, nothing moved or renamed. Scanning
+  again adds only what is new. The access key needs permission to list the
+  bucket.
+- **Preview**: PDFs, images, audio, video, text and Markdown open on the
+  document's page, which also renames, downloads and deletes it. Uploaded HTML
+  is never shown in the app, only downloaded.
+- **A tree of buckets** in the sidebar, each with its documents beneath, every
+  bucket shut until you open it.
 - **Share links** *(planned)*: a link with a permission (view or download) and
   an expiry, signed for the bucket itself. See [Share links](#share-links).
 - **Tags** *(planned)*: yours, to sort and filter documents. There are no
@@ -125,7 +137,7 @@ link is written to the server log:
 docker logs -f s3-artifacts-mcp
 ```
 
-Then add a bucket in **Settings → Buckets** *(planned)*. Keep the `.env`:
+Then add a bucket in **Settings → Buckets**. Saving runs a connection test first (head the bucket, write, read and delete a probe object, and open a share link from its public endpoint). Keep the `.env`:
 changing `BETTER_AUTH_SECRET` signs you out and makes the stored bucket secrets
 unreadable, and each bucket then asks for its secret again.
 
@@ -145,14 +157,14 @@ compose -f docker-compose.quickstart.yml up -d`. Migrations run at boot.
 | `DB_CONNECT_TIMEOUT_MS` | `60000` | How long boot waits for Postgres before giving up. |
 
 That is all of it. Sessions are always kept in Postgres, so a restart signs
-nobody out. OIDC is set up by pairing, below. Upload size, link defaults and
-buckets are in Settings *(planned)*.
+nobody out. OIDC is set up by pairing, below. Buckets are in Settings; upload
+size and link defaults will be too *(planned)*.
 
 ### Signing in with an OIDC provider
 
 With a provider that supports Dynamic Client Registration, such as heautou,
 make a setup URL there and paste it into the app: on a new instance, the login
-page's **Set up sign-in** tab; after that, **Settings → Sign-in**. The login
+page's **Set up sign-in** tab; after that, **Settings → Auth**. The login
 page shows "Sign in with …" at once, with no restart. Disconnecting removes the
 button and deletes the client at the provider. The owner can still sign in with
 a magic link.

@@ -1,12 +1,13 @@
 import { ApolloProvider } from '@apollo/client/react';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router';
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router';
 import { RequireAuth } from '@/components/layouts/require-auth';
 import { useThemePreference } from '@/components/ui/theme-preference';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { apolloClient } from '@/lib/apollo';
 import { ROUTES } from '@/lib/routes';
+import { DocumentRoute } from '@/routes/document';
 import { DocumentsRoute } from '@/routes/documents';
 import { LoginPage } from '@/routes/login';
 import { SettingsRoute } from '@/routes/settings';
@@ -39,8 +40,13 @@ createRoot(root).render(
             <Route path={ROUTES.login} element={<LoginPage />} />
             <Route path={ROUTES.verify} element={<VerifyPage />} />
             <Route path={ROUTES.sso} element={<SsoPage />} />
-            <Route path={ROUTES.documents} element={<RequireAuth contentSlot={<DocumentsRoute />} />} />
-            <Route path={ROUTES.settings} element={<RequireAuth contentSlot={<SettingsRoute />} />} />
+            {/* One layout route around every signed-in page, so the sidebar, and the buckets opened
+                in its tree, stay mounted while the reader moves between pages. */}
+            <Route element={<RequireAuth contentSlot={<Outlet />} />}>
+              <Route path={ROUTES.documents} element={<DocumentsRoute />} />
+              <Route path={ROUTES.document} element={<DocumentRoute />} />
+              <Route path={ROUTES.settings} element={<SettingsRoute />} />
+            </Route>
             <Route path="*" element={<Navigate to={ROUTES.documents} replace />} />
           </Routes>
         </BrowserRouter>

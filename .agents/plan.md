@@ -44,10 +44,10 @@ anyone can sign in (see "Environment").
 |---|---|---|
 | D1 | **One owner.** The first account to sign in owns the instance; every other address is refused. | Rows still carry `user_id`, so multi-user later is additive (see "Later"). |
 | D2 | **Engrafo's app layout** (`app/ server/ db/` workspaces), not the single-operator layout. | A deliberate departure from `cubicecho_backend`'s archetype test: v1 has one user, but the repo should not need restructuring when it grows a second. Postgres like Engrafo, PGlite in tests only. |
-| D3 | **Buckets are managed by the owner in Settings**; any bucket can receive uploads. | |
+| D3 | **Buckets are managed by the owner in Settings**; any bucket can receive uploads. **There is no default bucket:** every upload names its bucket. | MCP is per bucket, so an agent's bucket is its endpoint. In the app the upload panel preselects the bucket open in the tree, else the only one, else the last used (kept in the browser). |
 | D4 | **The app's own uploads and downloads stream through the server.** | No bucket CORS is needed for the app, and every backend behaves the same. The server carries the traffic. |
 | D5 | **Share links are presigned URLs on the bucket itself**, not links to the app. | The browser fetches straight from the bucket, so the app is not in the path. Consequences in "Share links". |
-| D6 | **Only files uploaded through the app are documents.** Existing objects in a bucket are ignored. | A "Scan bucket" import is listed under "Later". |
+| D6 | **Files already in a bucket become documents only when the owner scans it** (`scanBucket`). A scan adds a `ready` row per object no document points at, keeping its key; nothing is read, moved or renamed. | Unique `(bucket_id, object_key)` makes a scan safe to repeat or race. No checksum (the bytes are never read); the type is guessed from the extension. |
 | D7 | **MCP is read-only by default; `mcp_writable` per bucket** allows upload and tagging. | |
 | D8 | **Tags are the owner's** (`user_id`), unique by name ignoring case. | |
 | D9 | **No passwords on share links.** They get a permission and an expiry. | |
@@ -168,13 +168,12 @@ tenancy test enforces it).
 - `id`, `user_id`
 - `slug`: unique, URL-safe; names the MCP endpoint
 - `name`: shown in the UI
-- `provider`: `s3` | `minio` | `rustfs`. Only a preset, see below.
+- `provider`: `s3` | `minio` | `rustfs` | `b2`. Only a preset, see below. Each bucket has its own endpoint and credentials, so one instance can mix accounts and providers (say AWS S3, MinIO and Backblaze B2 side by side).
 - `endpoint`: the address the server uses. Null on AWS means the regional default.
 - `public_endpoint`: the address a share link is signed for. Defaults to `endpoint`.
 - `region`, `bucket`
 - `access_key_id`, `secret_access_key_enc`
 - `force_path_style`
-- `is_default`: at most one, enforced by a partial unique index
 - `mcp_enabled`, `mcp_writable`
 - `created_at`, `updated_at`
 
@@ -216,6 +215,8 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 - **Provider presets** fill the form; the owner can override any field:
   - `s3`: path-style off, region required, endpoint optional
   - `minio`, `rustfs`: path-style on, endpoint required, region `us-east-1`
+  - `b2` (Backblaze B2's S3-compatible API): path-style off, endpoint `https://s3.<region>.backblazeb2.com` required, region required (derived from the endpoint when left empty)
+  - Every client sends checksums only when required (`requestChecksumCalculation` / `responseChecksumValidation` = `WHEN_REQUIRED`), since some S3-compatible backends reject the SDK's default ones.
 - **Test connection** (`testBucket`, also run before every save):
   1. `HeadBucket`
   2. PUT, GET and DELETE a probe object
@@ -227,9 +228,9 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 
 ## Uploads and in-app downloads (D4)
 
-1. **Start.** `createDocumentUpload(bucketId?, filename, contentType, size, tagIds?)`:
+1. **Start.** `createDocumentUpload(bucketId, filename, contentType, size, tagIds?)`:
    - refuses above `max_upload_bytes`
-   - inserts a `pending_upload` row (default bucket when none is given)
+   - inserts a `pending_upload` row in that bucket
    - returns `{ document, uploadPath: /api/documents/:id/content }`
 2. **Send.** `PUT /api/documents/:id/content` (session only):
    - streams the body to S3 with `lib-storage` `Upload`, hashing SHA-256 as it passes
@@ -259,7 +260,7 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 - **Limits that come from S3, which the UI states:**
   - **Expiry is capped at 7 days** (SigV4's maximum, on AWS, MinIO and RustFS alike). The expiry picker offers 1 hour to 7 days and no "never". `SHARE_LINK_DEFAULTS.maxExpiryHours = 168`.
   - **A single link cannot be revoked before it expires.** S3 checks the signature, not our database.
-  - **"Revoke all links" re-keys the document** (`rekeyDocument`). It copies the object to `<new objectId>-<filename>`, deletes the old key, updates `object_key`, and marks every link signed for the old key as revoked. Their URLs now answer 404 from the bucket. It is offered on the document page and confirmed with `ConfirmButton`.
+  - **"Revoke all links" re-keys the document** (`rekeyDocument`). It copies the object to `<new objectId>-<filename>`, deletes the old key, updates `object_key`, and marks every link signed for the old key as revoked. Their URLs now answer 404 from the bucket. It is offered on the document page and confirmed with `ConfirmButton`. A scanned document's object is wherever the owner put it, so re-keying one moves their file to an app-made key; the confirm says so.
   - **Rotating the bucket's access key** also kills every link signed with it. The bucket form says so when the access key changes.
   - **`view` is not copy protection.** It only asks the browser to show the file inline, and the form's help text says so.
 - **Listing and deleting.** `deleteShareLink` removes a link from the list and is labelled "Remove from list". It does not stop the URL, and the confirm text says so.
@@ -334,7 +335,7 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 
 | Section | Contents |
 |---|---|
-| Buckets | List with the default marked; add/edit dialog (preset, endpoint, public endpoint, region, bucket, access key, secret which can be replaced but not read, path-style); Test; set default; remove/forget |
+| Buckets | List; add/edit dialog (preset, endpoint, public endpoint, region, bucket, access key, secret which can be replaced but not read, path-style); Test; re-enter secret; remove/forget |
 | Share links | All links, with filters, copy, remove from list |
 | MCP | Per-bucket switches and URLs, the client snippet |
 | API keys | Create (shown once), list with last used, revoke |
@@ -350,8 +351,8 @@ Generated reads for `buckets` (secret column excluded), `documents`, `tags`,
 by `user_id`. Every generated write is off, as in Engrafo. The hand-written
 mutations:
 
-- **Buckets:** `testBucket`, `createBucket`, `updateBucket`, `setBucketSecret`, `setDefaultBucket`, `setBucketMcp(enabled, writable)`, `deleteBucket(forgetDocuments)`
-- **Documents:** `createDocumentUpload`, `renameDocument`, `deleteDocument` (row and object), `rekeyDocument`
+- **Buckets:** `testBucket`, `createBucket`, `updateBucket`, `setBucketSecret`, `setBucketMcp(enabled, writable)`, `deleteBucket(forgetDocuments)`
+- **Documents:** `createDocumentUpload`, `scanBucket`, `renameDocument`, `deleteDocument` (row and object), `rekeyDocument`
 - **Tags:** `createTag`, `updateTag`, `deleteTag`, `setDocumentTags`, `bulkTagDocuments`
 - **Share links:** `createShareLink`, `deleteShareLink`, and `ShareLink.url` as a resolved field that decrypts for the owner's session
 - **Settings:** `updateAppSettings`
@@ -406,7 +407,7 @@ Each step is one or more Conventional Commits, and each ends green.
    - Done when: sign-in (magic link and OIDC pairing) works, `/healthz` answers, Settings shows Sign-in and API keys.
 2. **Buckets.**
    - `core/secrets.ts`, the `buckets` model, `storage/` (interface, s3, registry), presets, `testBucket`, the bucket mutations, Settings → Buckets.
-   - Done when: a RustFS bucket and an AWS-style bucket can be added, tested, defaulted and removed.
+   - Done when: a RustFS bucket and an AWS-style bucket can be added, tested, edited and removed.
 3. **Documents.**
    - The `documents` model, the upload start mutation, the stream-in and stream-out routes, the sweeper, the documents list, the document page with preview, rename and delete.
    - Done when: a batch of mixed files uploads with per-file progress into a chosen bucket and previews, and shows in the sidebar tree under that bucket. A dropped folder uploads its files flat.
@@ -427,7 +428,6 @@ Each step is one or more Conventional Commits, and each ends green.
 
 - More accounts and per-user document shares: add a `document_shares` table and widen the `documents` scope to "owner or shared".
 - Share links that go through the app, for instant revocation, no 7-day cap and download counts.
-- "Scan bucket" to import objects that already exist.
 - Moving documents between buckets.
 - API keys limited to chosen buckets.
 - Link passwords.

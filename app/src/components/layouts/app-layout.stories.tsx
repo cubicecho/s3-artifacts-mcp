@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, within } from 'storybook/test';
+import { MINIO_BUCKET, S3_BUCKET } from '@/components/domain/bucket-fixtures';
+import { documentServer, MIXED_DOCUMENTS } from '@/components/domain/document-fixtures';
 import { PageLayout } from '@/components/page-layout';
 import { ROUTES } from '@/lib/routes';
 import { AppLayout } from './app-layout';
@@ -40,7 +42,10 @@ function Page({ title }: { title: string }) {
 const meta = {
   title: 'Layouts/AppLayout',
   component: AppLayout,
-  parameters: { layout: 'fullscreen' },
+  parameters: {
+    layout: 'fullscreen',
+    apolloClient: { resolvers: documentServer([MINIO_BUCKET, S3_BUCKET], MIXED_DOCUMENTS).resolvers },
+  },
 } satisfies Meta<typeof AppLayout>;
 
 export default meta;
@@ -93,8 +98,7 @@ export const SettingsAtTheFoot: Story = {
 
 /**
  * Phone width. The sidebar is display:none and the same two destinations are icons in a header,
- * with the theme control and sign-out beside them — so nothing reachable on a desktop becomes
- * unreachable here.
+ * with sign-out beside them — so nothing reachable on a desktop becomes unreachable here.
  */
 export const Narrow: Story = {
   args: { contentSlot: <Page title="Documents" /> },
@@ -110,8 +114,28 @@ export const Narrow: Story = {
     await expect(canvas.getByRole('banner')).toBeVisible();
     // One of each, not two: the sidebar's copies are in the DOM and must not be reachable.
     await expect(canvas.getByRole('button', { name: 'Sign out' })).toBeVisible();
-    // The bar carries no theme picker (it does not fit at 320px), and the sidebar's is not laid out.
+    // The theme lives on Settings → Appearance, so neither the bar nor the sidebar has one.
     await expect(canvas.queryByRole('radiogroup', { name: 'Theme' })).not.toBeInTheDocument();
     await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
+  },
+};
+
+/** The bucket tree sits under the places, every bucket shut, with Settings and sign-out still at the foot. */
+export const BucketTreeInTheSidebar: Story = {
+  args: { contentSlot: <Page title="Documents" /> },
+  parameters: { router: { initialEntries: [ROUTES.documents] } },
+  play: async ({ canvasElement }) => {
+    const sidebar = within(within(canvasElement).getByRole('complementary'));
+    const tree = within(await sidebar.findByRole('list', { name: 'Buckets and documents' }));
+    for (const bucket of tree.getAllByRole('button')) {
+      await expect(bucket).toHaveAttribute('aria-expanded', 'false');
+    }
+    const places = sidebar.getByRole('navigation', { name: 'Main' });
+    const settings = sidebar.getByRole('link', { name: 'Settings' });
+    await expect(
+      places.compareDocumentPosition(tree.getAllByRole('button')[0] as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await expect(settings).toBeVisible();
+    await expect(sidebar.getByRole('button', { name: 'Sign out' })).toBeVisible();
   },
 };

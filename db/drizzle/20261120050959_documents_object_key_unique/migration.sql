@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_documents_bucket_object_key" ON "documents" ("bucket_id","object_key");

@@ -20,7 +20,7 @@ const tableKeys = Object.entries(dbSchema)
 
 describe('tenancy configuration', () => {
   it('finds the tables', () => {
-    expect(tableKeys.sort()).toEqual(['users']);
+    expect(tableKeys.sort()).toEqual(['buckets', 'documents', 'users']);
   });
 
   it.each(tableKeys)('scopes %s to the caller', (key) => {
@@ -48,11 +48,42 @@ describe('tenancy at runtime', () => {
   let alice: string;
   let bob: string;
 
+  let bobBucket: string;
+  let bobDocument: string;
+
   beforeAll(async () => {
     db = await createTestDb();
     // Two rows, inserted past better-auth's owner gate, so the scope has someone to hide.
     alice = await createUser(db, 'alice@example.com');
     bob = await createUser(db, 'bob@example.com');
+    const [row] = await db
+      .insert(dbSchema.buckets)
+      .values({
+        userId: bob,
+        slug: 'bobs',
+        name: 'Bob’s',
+        provider: 'rustfs',
+        endpoint: 'http://rustfs.lan:9000',
+        region: 'us-east-1',
+        bucket: 'bobs',
+        accessKeyId: 'bob',
+        secretAccessKeyEnc: 'v1.sealed',
+      })
+      .returning({ id: dbSchema.buckets.id });
+    bobBucket = row.id;
+    const [document] = await db
+      .insert(dbSchema.documents)
+      .values({
+        userId: bob,
+        bucketId: bobBucket,
+        title: 'Bob’s notes',
+        filename: 'notes.txt',
+        objectKey: 'notes',
+        contentType: 'text/plain',
+        size: 5,
+      })
+      .returning({ id: dbSchema.documents.id });
+    bobDocument = document.id;
   });
 
   afterAll(() => closeTestDb(db));
@@ -68,6 +99,32 @@ describe('tenancy at runtime', () => {
       { id: bob },
     );
     expect(data.users).toEqual([]);
+  });
+
+  it('hides another user’s buckets, even through a filter on their id', async () => {
+    expect((await createClient(db, alice).expectOk('{ buckets { id } }')).buckets).toEqual([]);
+    const filtered = await createClient(db, alice).expectOk(
+      'query ($id: UUID!) { buckets(where: { id: { eq: $id } }) { id } }',
+      { id: bobBucket },
+    );
+    expect(filtered.buckets).toEqual([]);
+    expect((await createClient(db, bob).expectOk('{ buckets { id } }')).buckets).toEqual([{ id: bobBucket }]);
+  });
+
+  it('hides another user’s documents, even through a filter on their id or their bucket', async () => {
+    const alicesView = createClient(db, alice);
+    expect((await alicesView.expectOk('{ documents { id } }')).documents).toEqual([]);
+    const byId = await alicesView.expectOk('query ($id: UUID!) { document(where: { id: { eq: $id } }) { id } }', {
+      id: bobDocument,
+    });
+    expect(byId.document).toBeNull();
+    const byBucket = await alicesView.expectOk(
+      'query ($id: UUID!) { documents(where: { bucketId: { eq: $id } }) { id } }',
+      { id: bobBucket },
+    );
+    expect(byBucket.documents).toEqual([]);
+    const asBob = await createClient(db, bob).expectOk('{ documents { id bucket { id } } }');
+    expect(asBob.documents).toEqual([{ id: bobDocument, bucket: { id: bobBucket } }]);
   });
 
   it('refuses the unauthenticated', async () => {

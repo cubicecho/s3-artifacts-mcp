@@ -1,0 +1,60 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "b6c1fe08-087a-4f95-b39d-328f5f575fdb",
+  "prevIds": [
+    "4987d097-15af-40f6-8715-5c9335f180a8"
+  ],
+  "footprints": [
+    {
+      "statementType": "drop_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "buckets",
+        "uq_buckets_default"
+      ],
+      "writes": [
+        "s|idx|public.uq_buckets_default",
+        "n|idx|public.uq_buckets_default",
+        "e|idx|public.uq_buckets_default",
+        "n|rel|public.uq_buckets_default"
+      ],
+      "reads": [
+        "e|tbl|public.buckets",
+        "n|sch|public",
+        "e|col|public.buckets.user_id"
+      ],
+      "sharedWrites": []
+    },
+    {
+      "statementType": "drop_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "buckets",
+        "is_default"
+      ],
+      "writes": [
+        "s|col|public.buckets.is_default",
+        "n|col|public.buckets.is_default",
+        "e|col|public.buckets.is_default"
+      ],
+      "reads": [
+        "n|tbl|public.buckets",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "drop",
+      "key": "columns\u0000[\"public\",\"buckets\",\"is_default\"]"
+    },
+    {
+      "op": "drop",
+      "key": "indexes\u0000[\"public\",\"uq_buckets_default\"]"
+    }
+  ]
+}
