@@ -1,3 +1,14 @@
+# [1.2.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.1.0...v1.2.0) (2026-11-20)
+
+### Bug Fixes
+
+* **server:** undo a re-key whose old object the bucket will not delete ([505205a](https://github.com/cubicecho/s3-artifacts-mcp/commit/505205acd65298fc414b9d3ee3f8419fe43feb65))
+
+### Features
+
+* **app:** share links, their lists, and Settings → General ([d09b12f](https://github.com/cubicecho/s3-artifacts-mcp/commit/d09b12f4f1a5762e20928d8b2b93293d31e39e17))
+* **server:** share links, re-keying and app settings ([021adec](https://github.com/cubicecho/s3-artifacts-mcp/commit/021adec850e062d75c6986160ee288d41196b8cc))
+
 # [1.1.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.0.0...v1.1.0) (2026-11-20)
 
 ### Features
