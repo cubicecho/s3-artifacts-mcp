@@ -1,5 +1,5 @@
 import { CombinedGraphQLErrors } from '@apollo/client/errors';
-import { useMutation, useQuery } from '@apollo/client/react';
+import { useApolloClient, useMutation, useQuery } from '@apollo/client/react';
 import { useState } from 'react';
 import { graphql } from '@/__generated__';
 import type { BucketSettingsQuery } from '@/__generated__/graphql';
@@ -21,6 +21,7 @@ import { ItemDescription, ItemTitle } from '@/components/ui/item';
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '@/components/ui/menu';
 import { messageOf } from '@/lib/error-message';
 import { joinStats } from '@/lib/format';
+import { LIBRARY_QUERIES } from '@/lib/library';
 import { queryLike } from '@/lib/query';
 
 const BucketList = graphql(`
@@ -139,6 +140,10 @@ function isInUse(error: unknown): boolean {
  */
 export function BucketSettings() {
   const result = useQuery(BucketList);
+  const client = useApolloClient();
+  // The sidebar tree and the documents list read buckets too, with their documents. A bucket
+  // added, re-keyed or removed here must reach them without a reload.
+  const refresh = () => Promise.all([result.refetch(), client.refetchQueries({ include: [...LIBRARY_QUERIES] })]);
   const [testBucket] = useMutation(TestSavedBucket);
   const [deleteBucket] = useMutation(DeleteBucket);
   const [editing, setEditing] = useState<EditableBucket | 'new' | null>(null);
@@ -184,7 +189,7 @@ export function BucketSettings() {
     setRefusal(null);
     try {
       await deleteBucket({ variables: { id: bucket.id, forgetDocuments } });
-      await result.refetch();
+      await refresh();
     } catch (error) {
       setRefusal({ bucket, message: messageOf(error) ?? 'The server refused it', inUse: isInUse(error) });
     }
@@ -260,13 +265,13 @@ export function BucketSettings() {
       {editing !== null && (
         <BucketFormDialog
           bucket={editing === 'new' ? undefined : editing}
-          onSaved={() => result.refetch()}
+          onSaved={refresh}
           onClose={() => setEditing(null)}
         />
       )}
 
       {rekeying !== null && (
-        <BucketSecretDialog bucket={rekeying} onSaved={() => result.refetch()} onClose={() => setRekeying(null)} />
+        <BucketSecretDialog bucket={rekeying} onSaved={refresh} onClose={() => setRekeying(null)} />
       )}
 
       <ConfirmDialog

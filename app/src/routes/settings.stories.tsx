@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 import { type BucketFixture, bucketServer, MIXED_BUCKETS } from '@/components/domain/bucket-fixtures';
+import { AppLayout } from '@/components/layouts/app-layout';
 import { clientId } from '@/lib/id';
 import { ROUTES } from '@/lib/routes';
 import { SettingsRoute, settingsLink } from './settings';
@@ -300,5 +301,38 @@ export const Narrow: Story = {
   play: async ({ canvas, canvasElement }) => {
     await expect(await canvas.findByRole('radiogroup', { name: 'Theme' })).toBeVisible();
     await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
+  },
+};
+
+const shell = bucketServer(MIXED_BUCKETS);
+/**
+ * Settings in its shell: removing a bucket here takes it out of the sidebar's tree too, without
+ * a reload, because the tree reads buckets through its own query.
+ */
+export const RemovingABucketUpdatesTheTree: Story = {
+  parameters: {
+    router: at('buckets'),
+    apolloClient: {
+      resolvers: {
+        Query: { ...RESOLVERS.Query, ...shell.resolvers.Query },
+        Mutation: shell.resolvers.Mutation,
+        Bucket: { documents: () => [] },
+      },
+    },
+  },
+  render: () => <AppLayout contentSlot={<SettingsRoute />} />,
+  play: async ({ canvas, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const tree = within(await canvas.findByRole('list', { name: 'Buckets and documents' }));
+    await expect(await tree.findByRole('button', { name: /^Scratch/ })).toBeInTheDocument();
+
+    const main = within(canvas.getByRole('main'));
+    await userEvent.click(await main.findByRole('button', { name: 'More for Scratch' }));
+    await userEvent.click(await page.findByRole('menuitem', { name: 'Remove' }));
+    await userEvent.click(within(await page.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(tree.queryByRole('button', { name: /^Scratch/ })).not.toBeInTheDocument());
+    const left = within(await canvas.findByRole('list', { name: 'Buckets and documents' }));
+    await expect(await left.findByRole('button', { name: /^Artifacts/ })).toBeInTheDocument();
   },
 };

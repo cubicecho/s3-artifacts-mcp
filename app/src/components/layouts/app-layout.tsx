@@ -1,5 +1,6 @@
 import { useLinkClickHandler, useMatch } from 'react-router';
 import { LogOut } from '@/components/domain/app-icons';
+import { BucketSidebarSection } from '@/components/domain/bucket-sidebar';
 import { AppBarItem, Sidebar, SidebarItem, SidebarSection } from '@/components/sidebar';
 import { SidebarLayout } from '@/components/split-layout';
 import { Button } from '@/components/ui/button';
@@ -82,8 +83,8 @@ interface AppLayoutProps {
  * The shell around every signed-in page: cubeui's `Sidebar` on the left, the
  * page on the right, and under `md` a bar over the page in the sidebar's place.
  *
- * This owns what `PageLayout` deliberately does not: the navigation, the theme
- * control and signing out. Pages own their own headers and keep using
+ * This owns what `PageLayout` deliberately does not: the navigation, the bucket
+ * tree and signing out. Pages own their own headers and keep using
  * `PageLayout` inside this.
  */
 export function AppLayout({ contentSlot }: AppLayoutProps) {
@@ -101,15 +102,18 @@ export function AppLayout({ contentSlot }: AppLayoutProps) {
       divider="none"
       sidebarSlot={
         <Sidebar
-          // Wider than the rail's default, for the bucket tree that arrives with documents.
+          // Wider than the rail's default, for the bucket tree's names.
           className="w-80"
           headerSlot={<Brand />}
           contentSlot={
-            <SidebarSection
-              as="nav"
-              label="Main"
-              contentSlot={MAIN_ITEMS.map((item) => <RailLink key={item.to} item={item} />)}
-            />
+            <>
+              <SidebarSection
+                as="nav"
+                label="Main"
+                contentSlot={MAIN_ITEMS.map((item) => <RailLink key={item.to} item={item} />)}
+              />
+              <BucketSidebarSection />
+            </>
           }
           footerSlot={
             <>
