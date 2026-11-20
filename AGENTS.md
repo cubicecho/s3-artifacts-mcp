@@ -5,8 +5,8 @@
 A small, self-hostable document store over S3-compatible buckets, built so that
 **an agent can generate an artifact, upload it over MCP to a bucket, create a
 share link and hand that link to its user.** One person owns the instance. One
-monorepo (npm workspaces): `app/` (frontend), `server/` (GraphQL API, later the
-upload routes and MCP), `db/` (schema and connection). One container serves all
+monorepo (npm workspaces): `app/` (frontend), `server/` (GraphQL API, the
+content routes and the MCP endpoints), `db/` (schema and connection). One container serves all
 of it.
 
 It started as a copy of Engrafo (`apps/engrafo`), stripped to what this scope
@@ -14,11 +14,12 @@ needs. The agreed design is [`.agents/plan.md`](.agents/plan.md). Read it
 before adding a feature: it has the data model, the GraphQL surface, the MCP
 tools and the build order.
 
-**Where the build is:** step 4 of the plan (share links). Sign-in, API keys,
+**Where the build is:** step 5 of the plan (MCP, the goal). Sign-in, API keys,
 health, settings, buckets, documents (upload, scan, preview, rename, delete, the
-bucket tree), share links (with re-keying) and `app_settings` exist. MCP and
-tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
-Don't write code or docs as if they exist.
+bucket tree), share links (with re-keying), `app_settings` and the per-bucket
+MCP endpoints exist. Tags do not yet. They are under
+[Planned](#planned--see-agentsplanmd) below. Don't write code or docs as if
+they exist.
 
 ## Skills to load
 
@@ -49,7 +50,7 @@ As Engrafo, minus OCR, pgvector and the embedding model.
 | Database | Drizzle `1.0.0-rc.5` + PostgreSQL (`postgres-js`); PGlite in tests only |
 | Auth | better-auth (magic link, OIDC pairing, api-key plugin), `@cubicecho/graphql-better-auth` |
 | Storage | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`, `@aws-sdk/lib-storage` |
-| MCP (planned) | `@modelcontextprotocol/sdk`, stateless Streamable HTTP |
+| MCP | `@modelcontextprotocol/sdk`, stateless Streamable HTTP, hand-written tools |
 | Testing | Vitest (node on PGlite, dom), Storybook + Playwright |
 | Tooling | Biome, Node 26 ESM with no server build, semantic-release, Docker (`node:26-slim`) |
 
@@ -58,7 +59,7 @@ Packages: `@cubicecho/s3-artifacts-mcp-app`, `@cubicecho/s3-artifacts-mcp-server
 
 ## Project structure
 
-As of step 4. The folders later steps add are in the plan's "Layout".
+As of step 5. The folders later steps add are in the plan's "Layout".
 
 ```
 s3-artifacts-mcp/
@@ -73,17 +74,17 @@ s3-artifacts-mcp/
 │       │   ├── layouts/     # app-layout (the sidebar shell around every signed-in page), require-auth
 │       │   └── domain/      # bucket-tree, bucket-sidebar, upload-panel, upload-dialog, document-preview-card, document-details-card,
 │       │                    #   rename-document-dialog, bucket-settings, bucket-form-dialog, bucket-secret-dialog, bucket-test-report, sso-pairing, api-key-settings,
-│       │                    #   document-share-links, share-link-dialog, share-link-list, share-link-settings, link-expiry-field, general-settings,
+│       │                    #   document-share-links, share-link-dialog, share-link-list, share-link-settings, link-expiry-field, general-settings, mcp-settings,
 │       │                    #   and the stories' mock servers (*-fixtures.ts)
-│       ├── routes/          # login, verify, sso, settings (Buckets, Share links, General, Auth, API keys, Appearance), documents (/), document (/documents/:id)
-│       ├── lib/             # apollo, auth, library (the tree's and list's one query), upload, upload-limit, share-links, content-url, page, cn()
+│       ├── routes/          # login, verify, sso, settings (Buckets, Share links, MCP, General, Auth, API keys, Appearance), documents (/), document (/documents/:id)
+│       ├── lib/             # apollo, auth, library (the tree's and list's one query), upload, upload-limit, share-links, content-url, mcp, settings-tabs, page, cn()
 │       └── main.tsx         # Providers + the router
 ├── server/                  # GraphQL API (port 3005)
 │   ├── __generated__/       # Generated SDL (not committed)
 │   └── src/
 │       ├── index.ts         # Boot only: preflight, wait for Postgres, migrate, createApp, listen, stop on a signal
 │       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env, secrets
-│       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs), content (/api routes)
+│       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs), content (/api routes); mounts mcp/
 │       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema, docs, parent-id, naming
 │       ├── auth/            # better-auth (with the owner gate), auth-host, admin, rate-limit, resolvers
 │       ├── sso/             # Pairing an OIDC provider from a setup URL: settings, pairing (RFC 7591/7592), resolvers
@@ -93,6 +94,7 @@ s3-artifacts-mcp/
 │       ├── documents/       # keys, create, scan, rekey, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
 │       ├── share-links/     # create (signing), expiry, state, sdl, resolvers
 │       ├── app-settings/    # app-settings (read, bounds, update), sdl, resolvers
+│       ├── mcp/             # endpoint (/mcp/b/:slug, the key), access (the bucket scope), tools, uploads, content-types
 │       └── __tests__/       # Server tests, in the same folders as src; helpers.ts at the root
 ├── db/
 │   ├── drizzle/             # Generated migrations (committed)
@@ -250,7 +252,8 @@ holds the current one and `rebuild()` replaces it. The context takes
 **API keys are minted only by a session.** They are better-auth's api-key
 plugin, prefix `s3a_`, minted with `rateLimitEnabled: false` (the plugin's
 default of ten a day starves an agent). A key cannot mint its successor, and
-`SECURE_LOCAL_NET` never waives a key.
+`SECURE_LOCAL_NET` never waives a key. A key reaches only the MCP endpoints; a
+session reaches only `/graphql` and `/api`.
 
 **`SECURE_LOCAL_NET` makes an address the whole credential.** `requestSignIn`
 returns a live session for whatever address it is handed. It is for a LAN you
@@ -326,8 +329,9 @@ body only with the `page` and `prose` columns, so every full-width page passes
 
 **Settings sections are tabs in the query string** (`?tab=`), a `Link` per tab,
 so a section can be linked and survives a reload. An unknown tab opens the
-first. The tabs are Buckets, Share links, General, Auth, API keys and
-Appearance; the plan adds MCP. Link to one with `settingsLink(tab)`. **The theme is
+first. The tabs are Buckets, Share links, MCP, General, Auth, API keys and
+Appearance, defined in `lib/settings-tabs.ts` (not the route, so a component the
+route renders can link to a tab). Link to one with `settingsLink(tab)`. **The theme is
 chosen only on Appearance** (the card picker); the sidebar, the bar and page
 headers carry no theme picker. The sign-in pages keep their compact one, since
 nobody signed out can reach Settings.
@@ -345,7 +349,7 @@ no Cloudflare R2 preset. Rules that are easy to break:
   `createApp` and read from the context, so tests hand in the in-memory backend
   (`__tests__/memory-storage.ts`).
 - **Two clients per bucket**, because a signature covers the host: `endpoint`
-  for the server, `public_endpoint` for signing share links.
+  for the server, `public_endpoint` for signing share links and MCP upload URLs.
 - **Clients send checksums only when required**
   (`requestChecksumCalculation` / `responseChecksumValidation` =
   `WHEN_REQUIRED`). The SDK's default flexible checksums are refused by B2 and
@@ -372,7 +376,10 @@ exactly the declared size becomes `ready` (sha256 set, in one transaction
 guarded on `pending_upload`). Any other ending (short, long, storage failure,
 client gone) aborts the multipart upload and deletes the object and the row.
 The sweeper (`documents/sweep.ts`, started only in `index.ts`) drops pending
-rows idle past `UPLOAD_DEFAULTS.pendingTtlMinutes`. Lists show `ready` only.
+rows idle past `UPLOAD_DEFAULTS.pendingTtlMinutes`, and any object at their
+key, which is also how an MCP `create_upload` that never completes is cleaned
+up. Making a row ready is `markReady` and restarting its sweep clock is
+`claimPending` (`documents/rows.ts`), for the PUT route and MCP alike. Lists show `ready` only.
 Object keys are `<uuid>-<ascii filename>` at the bucket's top level. The size
 limit is the owner's `app_settings.max_upload_bytes`, read by both
 `createDocumentUpload` and the PUT (a limit lowered in between refuses the PUT
@@ -398,7 +405,7 @@ and a field on `updateAppSettings`, never an env var. The cache keys
 **Share links are presigned GETs on the bucket's `public_endpoint` (D5), and
 the bucket, not this database, decides whether one opens.**
 
-- `createShareLink` (`share-links/create.ts`, shared with MCP later through its
+- `createShareLink` (`share-links/create.ts`, shared with MCP through its
   `createdBy`) signs with `Storage.presignGet`: `inline` for `view`,
   `attachment` with the filename for `download`, and the document's content
   type. Only a `ready` document (CONFLICT otherwise). A permission or expiry
@@ -440,6 +447,56 @@ nothing twice. One scan adds at most `SCAN_DEFAULTS.maxImports`, then says
 `truncated`; the next carries on. A key with a `/` in it is still shown flat
 (D11). Deleting a scanned document deletes the owner's object, as for any
 document.
+
+**MCP is one endpoint per bucket, `/mcp/b/:slug`** (`mcp/`), stateless
+Streamable HTTP with a server per request, as Engrafo's `/mcp`. Rules that are
+easy to break:
+
+- **The key first, then the bucket.** `endpoint.ts` reads an `s3a_` key from
+  `x-api-key` or `Authorization: Bearer` and nothing else: not a cookie, not a
+  session token, and `SECURE_LOCAL_NET` never waives it. Without a valid key
+  every request is 401, so a stranger learns nothing about slugs. With one, an
+  unknown slug, another owner's bucket and a bucket with `mcp_enabled` off all
+  answer the same 404.
+- **One scope rule.** Every document an MCP tool reads goes through
+  `inBucket` in `mcp/access.ts` (the key owner's rows in the endpoint's
+  bucket). A document elsewhere answers the same `NO_SUCH_DOCUMENT` as a missing
+  one. Add a query there, never beside it.
+- **Every tool re-reads the bucket row** (`currentBucket`), so switching MCP off
+  or making it read-only holds from the next call. Write tools are registered
+  only when the bucket is `mcp_writable` as the request arrives, and each still
+  calls `requireWritable`. `setBucketMcp` refuses writable while off.
+- **A tool failure is a result** (`isError` with a message the model can act
+  on), never a transport error. Results are JSON, as text and as
+  `structuredContent`.
+- **Uploads reuse the app's lifecycle.** `upload_document` and `create_upload`
+  make the row with `createPendingDocument` (so the owner's upload limit holds);
+  `create_upload` also caps at `MCP_DEFAULTS.maxPresignedPutBytes` (one PUT, 5
+  GiB). The presigned PUT (`Storage.presignPut`) is signed for
+  `public_endpoint` with `content-type` and `content-length` in the signature;
+  the presigner leaves them unsigned unless told. `complete_upload` heads the
+  object, refuses (and removes) a size mismatch, hashes it once and calls
+  `markReady`; on a ready document it answers it again.
+- **Text uploaded inline is stored as UTF-8**, so a text type with no charset
+  gets `; charset=utf-8` (`mcp/content-types.ts`).
+- **Links come from `createShareLink`** with `ShareLinkCreator.Mcp`; a `share`
+  that leaves a field out takes the `app_settings` default. Every write tool's
+  description tells the agent to hand over `shareLink.url` and its expiry; that
+  text is how an agent learns to.
+- **The limits move together**: `HTTP_DEFAULTS.mcpBodyLimitBytes` stays above
+  `MCP_DEFAULTS.inlineUploadBytes` (with room for JSON escaping), and
+  `uploadUrlTtlMinutes` below `UPLOAD_DEFAULTS.pendingTtlMinutes`, so nothing
+  reaches a key after its row was swept. A test checks both.
+- **The acceptance test** (`__tests__/mcp/mcp.integration.test.ts`) is the goal
+  against a real RustFS: upload with a share, open the link with no
+  credentials, a binary file through `create_upload`, a plain `fetch` PUT and
+  `complete_upload`, then a re-key and a 404. It is skipped unless
+  `S3AM_IT_ENDPOINT` is set, and deletes every object it makes.
+- Settings → MCP (`mcp-settings`) shows each bucket's switches, its endpoint
+  from the browser's origin (`lib/mcp.ts`, kept in step with `MCP_ROUTE` by
+  hand) and a `claude mcp add --transport http <slug> <url> --header "x-api-key:
+  …"` command. `--header` is variadic, so it stays after the name and URL. Vite
+  proxies `/mcp` in dev.
 
 **The content routes are same-origin and must stay safe as such.**
 `/api/documents/:id/content` is served from the app's own origin, so an
@@ -487,14 +544,9 @@ too.
 None of this exists yet. When you build a step, move its rules up into "Rules
 that carry weight" and the structure tree, and delete them here.
 
-- **MCP per bucket (step 5).** `/mcp/b/:slug`, stateless Streamable HTTP, API
-  key only. Read-only unless the bucket is `mcp_writable`. Every tool is scoped
-  by `bucket_id` in `mcp/access.ts` and re-reads the bucket per call. The write
-  tools are `upload_document` (the text path), `create_upload` → `curl -T` →
-  `complete_upload` (the file path), `create_share_link` and `tag_document`. The
-  acceptance test runs against a real RustFS.
 - **Tags (step 6).** The owner's, unique by name ignoring case, kept in Postgres
-  (not as S3 object tags).
+  (not as S3 object tags). Then MCP gains `list_tags`, `tag_document` and a
+  `tags` argument on `list_documents` and the upload tools.
 
 ## Stories are the frontend tests
 
@@ -503,7 +555,8 @@ The rules are in `cubicecho_frontend` → `testing.md`. What is particular here:
 - **Stories live next to the component**, so a component and the story claiming
   it works change in the same diff. **Nothing under `components/ui/`**: cubeui
   has its own Storybook.
-- **Mock servers live in `components/domain/*-fixtures.ts`**: `bucketServer`,
+- **Mock servers live in `components/domain/*-fixtures.ts`**: `bucketServer`
+  (its `mcpCalls` records `setBucketMcp`),
   `documentServer`, `shareLinkServer`, and `sharingServer` (documents and
   links over one list, so a re-key moves the document the page shows).
   `mergeResolvers` lays one over another.

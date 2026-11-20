@@ -6,6 +6,7 @@ import { trustProxy } from '../core/config.ts';
 import type { SecretBox } from '../core/secrets.ts';
 import { HttpStatus } from '../core/wire.ts';
 import { createGraphQLHandler } from '../graphql/handler.ts';
+import { mountMcp } from '../mcp/endpoint.ts';
 import type { StorageRegistry } from '../storage/registry.ts';
 import { mountContent } from './content.ts';
 import { checkHealth } from './health.ts';
@@ -58,6 +59,8 @@ export function createApp({ staticDir, fetch: fetchUrl = fetch, ...deps }: AppDe
   mountSso(app, deps.authHost);
   // A document's bytes, in and out, and a JSON 404 for the rest of /api.
   mountContent(app, deps);
+  // Each bucket's MCP endpoint, before the static handler as well.
+  mountMcp(app, { ...deps, fetch: fetchUrl });
   if (staticDir !== undefined) {
     const serveStatic = createStaticHandler(staticDir);
     app.use((req, res) => serveStatic(req, res));

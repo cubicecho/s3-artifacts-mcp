@@ -1,0 +1,341 @@
+import { buffer } from 'node:stream/consumers';
+import {
+  type Bucket,
+  type Document,
+  ShareLinkCreator,
+  ShareLinkPermission,
+} from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { CallToolResult, ContentBlock } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
+import { describeBytes } from '../app-settings/app-settings.ts';
+import { version } from '../core/config.ts';
+import type { Context } from '../core/context.ts';
+import { DOCUMENT_DEFAULTS, MCP_DEFAULTS, SHARE_LINK_DEFAULTS } from '../core/defaults.ts';
+import { errorMessage } from '../core/errors.ts';
+import { bucketStorageFor } from '../documents/bucket-storage.ts';
+import { type CreatedShareLink, createShareLink } from '../share-links/create.ts';
+import { expiryHoursSchema } from '../share-links/expiry.ts';
+import { currentBucket, listBucketDocuments, readyBucketDocument, requireWritable } from './access.ts';
+import { isInlineBinary, isTextLike } from './content-types.ts';
+import { completeUpload, FILE_PLACEHOLDER, startUpload, uploadText } from './uploads.ts';
+
+// The tools one bucket's endpoint offers. The read tools are always there; the write tools only when the bucket is
+// `mcp_writable` as the request arrives, and each checks again when it runs. Every tool reads the bucket row afresh
+// (access.ts), so switching MCP off or making the bucket read-only holds from the next call. Results are JSON, as
+// text and as structured content, so an agent can read the share link's URL straight out of them.
+
+/** The name the MCP server gives for itself. */
+export const MCP_SERVER_NAME = 's3-artifacts-mcp';
+/** The tools every endpoint offers. */
+export const READ_TOOLS = ['list_documents', 'get_document'] as const;
+/** The tools a writable bucket's endpoint offers as well. */
+export const WRITE_TOOLS = ['upload_document', 'create_upload', 'complete_upload', 'create_share_link'] as const;
+/** Spaces a JSON result is indented by, so an agent and a person can both read it. */
+const JSON_INDENT = 2;
+/** Where an embedded resource says it came from. */
+const RESOURCE_SCHEME = 's3a:';
+
+const { pageSize, inlineTextBytes, inlineBinaryBytes, inlineUploadBytes, uploadUrlTtlMinutes } = MCP_DEFAULTS;
+const { maxExpiryHours, labelMaxLength } = SHARE_LINK_DEFAULTS;
+const { filenameMaxLength, contentTypeMaxLength } = DOCUMENT_DEFAULTS;
+
+/** What a share link is, for a tool description. */
+const LINK_NATURE = 'The link opens straight from the bucket with no sign-in, and cannot be revoked before it expires.';
+/** What every write tool that makes a link says: how the agent hands the result on. */
+const HAND_OVER = `Give the user \`shareLink.url\` and say when it stops working (\`shareLink.expiresAt\`). ${LINK_NATURE}`;
+
+/** What the tools are handed: the call's context, as the key's owner, and the endpoint's bucket. */
+export interface McpDeps {
+  /** The call's context. `userId` is the API key's owner, and nothing an agent sends changes it. */
+  ctx: Context;
+  /** The key's owner. */
+  userId: string;
+  /** The endpoint's bucket, as it was when the request arrived. Each tool reads it again. */
+  bucket: Bucket;
+}
+
+/** A tool's answer: the JSON it returns, and any content that goes after it. */
+interface ToolAnswer {
+  data: Record<string, unknown>;
+  more?: ContentBlock[];
+}
+
+/** The share link to make along with an upload. Anything left out takes the owner's default. */
+const shareSchema = z
+  .object({
+    permission: z
+      .enum([ShareLinkPermission.View, ShareLinkPermission.Download])
+      .optional()
+      .describe('`view` opens the file in the browser; `download` saves it under its filename'),
+    expiresInHours: expiryHoursSchema
+      .optional()
+      .describe(`Whole hours the link works, at most ${maxExpiryHours} (7 days, the most S3 allows)`),
+    label: z.string().max(labelMaxLength).optional().describe('A note the owner sees beside the link'),
+  })
+  .describe("Also make a share link for the document. Fields left out take the owner's defaults");
+
+/** What a share link a tool made looks like to the agent. */
+type ShareLinkView = Record<string, unknown>;
+
+/**
+ * A document as a tool shows it.
+ *
+ * @param document - The row.
+ * @returns Its id, names, type, size, hash and when it was added.
+ */
+function documentView(document: Document): Record<string, unknown> {
+  return {
+    id: document.id,
+    title: document.title,
+    filename: document.filename,
+    contentType: document.contentType,
+    size: document.size,
+    sha256: document.sha256,
+    createdAt: document.createdAt.toISOString(),
+  };
+}
+
+/**
+ * A new share link as a tool shows it.
+ *
+ * @param link - The row and the URL.
+ * @returns Its URL, permission, expiry and label.
+ */
+function shareLinkView({ row, url }: CreatedShareLink): ShareLinkView {
+  return { url, permission: row.permission, expiresAt: row.expiresAt.toISOString(), label: row.label };
+}
+
+/**
+ * Runs a tool body and answers with what it returned. A failure is a result the model can read, never a transport
+ * error.
+ *
+ * @param body - The tool's work.
+ * @returns The result: the JSON as text and as structured content, then any further content.
+ */
+async function run(body: () => Promise<ToolAnswer>): Promise<CallToolResult> {
+  try {
+    const { data, more = [] } = await body();
+    return {
+      content: [{ type: 'text', text: JSON.stringify(data, null, JSON_INDENT) }, ...more],
+      structuredContent: data,
+    };
+  } catch (error) {
+    return { isError: true, content: [{ type: 'text', text: errorMessage(error) }] };
+  }
+}
+
+/**
+ * What the server tells an agent about itself when it connects.
+ *
+ * @param bucket - The endpoint's bucket.
+ * @returns The instructions.
+ */
+function instructionsFor(bucket: Bucket): string {
+  const reach = `Files in the owner's bucket "${bucket.name}". Only this bucket is reachable here.`;
+  if (bucket.mcpWritable === false) {
+    return `${reach} It is shared read-only: list_documents and get_document read it.`;
+  }
+  return (
+    `${reach} To hand the user a file you made, store it here and give them a share link. ` +
+    'Text you wrote yourself (markdown, HTML, CSV, JSON, code): upload_document with `share`. ' +
+    'A file on disk (PDF, image, archive): create_upload, run the curl command it gives, then complete_upload with ' +
+    `\`share\`. ${HAND_OVER}`
+  );
+}
+
+/**
+ * Builds the MCP server for one request to one bucket's endpoint. Stateless: everything lives in Postgres and the
+ * bucket, so a server per request costs only the tool list.
+ *
+ * @param deps - The call's context, the key's owner and the endpoint's bucket.
+ * @returns The server, with its tools registered.
+ */
+export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
+  const server = new McpServer(
+    { name: MCP_SERVER_NAME, version: version() },
+    { instructions: instructionsFor(bucket) },
+  );
+  /** The bucket as it is now. */
+  const reread = () => currentBucket(ctx.db, userId, bucket.id);
+  /** The bucket as it is now, refusing when it is read-only. */
+  const writable = async (): Promise<Bucket> => {
+    const now = await reread();
+    requireWritable(now);
+    return now;
+  };
+  /** Makes the share link an upload asked for, if it asked for one. */
+  const shareIfAsked = async (
+    document: Document,
+    share: z.infer<typeof shareSchema> | undefined,
+  ): Promise<Record<string, unknown>> => {
+    if (share === undefined) {
+      return {};
+    }
+    const link = await createShareLink(ctx, { documentId: document.id, ...share }, ShareLinkCreator.Mcp);
+    return { shareLink: shareLinkView(link) };
+  };
+
+  server.registerTool(
+    'list_documents',
+    {
+      title: 'List documents',
+      description: `The documents in this bucket, newest first, ${pageSize} at most a call: id, title, filename, type, size and when each was added. When there are more, \`nextCursor\` is set: pass it as \`cursor\` for the next page.`,
+      inputSchema: {
+        title: z.string().trim().min(1).optional().describe('Only titles containing this, ignoring case'),
+        contentType: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe('Only types starting with this, ignoring case: `image/` for every image, `application/pdf`'),
+        limit: z.number().int().min(1).max(pageSize).default(pageSize),
+        cursor: z.string().optional().describe('`nextCursor` from the page before'),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (args) =>
+      run(async () => {
+        const page = await listBucketDocuments(ctx.db, await reread(), args);
+        return { data: { documents: page.documents.map(documentView), nextCursor: page.nextCursor } };
+      }),
+  );
+
+  server.registerTool(
+    'get_document',
+    {
+      title: 'Read a document',
+      description: `One document's details, then its content: text up to ${describeBytes(inlineTextBytes)} as text, an image or PDF up to ${describeBytes(inlineBinaryBytes)} as an embedded resource. Anything larger or of another type comes back as its details and a note.`,
+      inputSchema: { id: z.string().describe('The document id, from list_documents') },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    ({ id }) =>
+      run(async () => {
+        const now = await reread();
+        const document = await readyBucketDocument(ctx.db, now, id);
+        const details = documentView(document);
+        const isText = isTextLike(document.contentType) && document.size <= inlineTextBytes;
+        const isBinary = isInlineBinary(document.contentType) && document.size <= inlineBinaryBytes;
+        if (isText === false && isBinary === false) {
+          return { data: { document: details, note: tooLargeNote(document) } };
+        }
+        const storage = await bucketStorageFor(ctx, now.id);
+        const bytes = await buffer(await storage.getStream(document.objectKey));
+        if (isText) {
+          return { data: { document: details }, more: [{ type: 'text', text: bytes.toString('utf8') }] };
+        }
+        const uri = `${RESOURCE_SCHEME}//${now.slug}/${document.id}`;
+        const resource = { uri, mimeType: document.contentType, blob: bytes.toString('base64') };
+        return { data: { document: details }, more: [{ type: 'resource', resource }] };
+      }),
+  );
+
+  if (bucket.mcpWritable === false) {
+    return server;
+  }
+
+  server.registerTool(
+    'upload_document',
+    {
+      title: 'Upload text as a document',
+      description: `Stores text you wrote (markdown, HTML, CSV, JSON, code) as a new document, up to ${describeBytes(inlineUploadBytes)} of UTF-8, and with \`share\` makes a share link for it in the same call. A text type with no charset is stored with \`charset=utf-8\`. For a file on disk, or anything binary, use create_upload. ${HAND_OVER}`,
+      inputSchema: {
+        filename: z
+          .string()
+          .max(filenameMaxLength)
+          .describe('What the file is called, with its extension: `report.md`'),
+        contentType: z.string().max(contentTypeMaxLength).describe('Its MIME type: `text/markdown`, `text/html`'),
+        text: z.string().describe('The whole file'),
+        share: shareSchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    ({ share, ...upload }) =>
+      run(async () => {
+        const document = await uploadText(ctx, await writable(), upload);
+        return { data: { document: documentView(document), ...(await shareIfAsked(document, share)) } };
+      }),
+  );
+
+  server.registerTool(
+    'create_upload',
+    {
+      title: 'Start a file upload',
+      description: `Starts uploading a file from your disk (a PDF, image, archive; anything binary or large): it answers with \`uploadUrl\`, a presigned PUT straight to the bucket that works for ${uploadUrlTtlMinutes} minutes, and \`curl\`, the command that sends the file to it. Replace ${FILE_PLACEHOLDER} with the file's path and run it, then call complete_upload with \`documentId\`. The PUT must send exactly \`headers\` and \`size\` bytes. Pass \`share\` to complete_upload, then give the user \`shareLink.url\` and say when it stops working (\`shareLink.expiresAt\`). ${LINK_NATURE}`,
+      inputSchema: {
+        filename: z
+          .string()
+          .max(filenameMaxLength)
+          .describe('What the file is called, with its extension: `chart.png`'),
+        contentType: z.string().max(contentTypeMaxLength).describe('Its MIME type: `application/pdf`, `image/png`'),
+        size: z.number().int().positive().describe("The file's exact length in bytes"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    (upload) =>
+      run(async () => {
+        const started = await startUpload(ctx, await writable(), upload);
+        return {
+          data: {
+            documentId: started.document.id,
+            uploadUrl: started.uploadUrl,
+            expiresAt: started.expiresAt.toISOString(),
+            headers: started.headers,
+            curl: started.curl,
+          },
+        };
+      }),
+  );
+
+  server.registerTool(
+    'complete_upload',
+    {
+      title: 'Finish a file upload',
+      description: `Finishes an upload once its file has been sent to the URL create_upload gave: the bucket's copy is checked against the size declared and hashed, and the document is ready. With \`share\` it also makes a share link. Calling it again on a finished upload answers the document again. ${HAND_OVER}`,
+      inputSchema: {
+        documentId: z.string().describe('`documentId` from create_upload'),
+        share: shareSchema.optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    ({ documentId, share }) =>
+      run(async () => {
+        const document = await completeUpload(ctx, await writable(), documentId);
+        return { data: { document: documentView(document), ...(await shareIfAsked(document, share)) } };
+      }),
+  );
+
+  server.registerTool(
+    'create_share_link',
+    {
+      title: 'Share a document',
+      description: `Makes a share link for a document already in the bucket. Fields left out take the owner's defaults. ${HAND_OVER}`,
+      inputSchema: { id: z.string().describe('The document id, from list_documents'), ...shareSchema.shape },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    ({ id, ...share }) =>
+      run(async () => {
+        const document = await readyBucketDocument(ctx.db, await writable(), id);
+        return { data: { document: documentView(document), ...(await shareIfAsked(document, share)) } };
+      }),
+  );
+
+  return server;
+}
+
+/**
+ * Why `get_document` returned no content.
+ *
+ * @param document - The document.
+ * @returns The note.
+ */
+function tooLargeNote(document: Document): string {
+  const isText = isTextLike(document.contentType);
+  if (isText) {
+    return `It is ${describeBytes(document.size)}, past the ${describeBytes(inlineTextBytes)} returned inline.`;
+  }
+  if (isInlineBinary(document.contentType)) {
+    return `It is ${describeBytes(document.size)}, past the ${describeBytes(inlineBinaryBytes)} returned inline.`;
+  }
+  return `A ${document.contentType} file is not returned inline; only text, images and PDFs are.`;
+}

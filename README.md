@@ -9,9 +9,9 @@ small, self-hosted store in between. It keeps the documents' metadata in
 Postgres, the bytes in buckets you configure, and gives each bucket its own MCP
 endpoint.
 
-> **Status: early.** This is step 4 of [the plan](.agents/plan.md): sign-in,
-> API keys, settings, buckets, documents and share links. Everything marked
-> *planned* below is designed but not built yet.
+> **Status: early.** This is step 5 of [the plan](.agents/plan.md): sign-in,
+> API keys, settings, buckets, documents, share links and MCP. Everything
+> marked *planned* below is designed but not built yet.
 
 ## What it does
 
@@ -21,7 +21,7 @@ endpoint.
   no default bucket: every upload says which bucket it goes to.
 - **Upload**: from the app, a batch of files (a dropped folder uploads flat),
   each with its own progress bar, up to the limit you set in Settings → General
-  (100 MiB to start, at most 50 GiB). From an agent over MCP *(planned)*.
+  (100 MiB to start, at most 50 GiB). From an agent over MCP, below.
 - **Scan a bucket** for the files already in it, put there by anything else:
   each becomes a document where it is, nothing moved or renamed. Scanning
   again adds only what is new. The access key needs permission to list the
@@ -36,19 +36,41 @@ endpoint.
   the document's page and in Settings → Share links. See [Share links](#share-links).
 - **Tags** *(planned)*: yours, to sort and filter documents. There are no
   folders.
-- **MCP per bucket** *(planned)*: each bucket is its own endpoint,
-  `/mcp/b/<slug>`, off until you turn it on and read-only until you make it
-  writable.
+- **MCP per bucket**: each bucket is its own endpoint, `/mcp/b/<slug>`, off
+  until you turn it on in Settings → MCP and read-only until you make it
+  writable. An agent connected to one bucket sees nothing else.
 - **One owner.** The first account to sign in owns the instance. Sign in with a
   magic link (written to the server log) or an OIDC provider you pair from the
   app. API keys, made in Settings, are what agents use.
 
-## How an agent uploads *(planned)*
+## Connecting Claude Code
+
+1. Make an API key in **Settings → API keys**. It is shown once.
+2. In **Settings → MCP**, turn on **Reachable over MCP** for the bucket, and
+   **Writable** if the agent should upload and share, not only read.
+3. Copy the command shown under the bucket, put your key in it, and run it:
+
+```bash
+claude mcp add --transport http artifacts https://docs.example.com/mcp/b/artifacts \
+  --header "x-api-key: s3a_…"
+```
+
+Any MCP client that speaks Streamable HTTP works the same way: the endpoint, and
+the key as `x-api-key` or `Authorization: Bearer`. A session cookie is never
+accepted there. An unknown slug and a bucket with MCP off answer the same 404.
+
+The tools are `list_documents` and `get_document` on every bucket (text up to
+256 KiB comes back as text, an image or PDF up to 10 MiB as an embedded
+resource), and on a writable one `upload_document`, `create_upload`,
+`complete_upload` and `create_share_link`.
+
+## How an agent uploads
 
 There are two paths, because there are two kinds of artifact.
 
-**Text the model wrote** (markdown, HTML, CSV, JSON, code). The model already
-has it as text, so it sends it in one tool call:
+**Text the model wrote** (markdown, HTML, CSV, JSON, code), up to 5 MiB. The
+model already has it as text, so it sends it in one tool call. A text type that
+names no charset is stored as `charset=utf-8`:
 
 ```
 upload_document({ filename, contentType, text, share: { expiresInHours: 24 } })
@@ -61,17 +83,26 @@ emitting them as tokens. So the server hands out a presigned PUT URL, the
 agent's shell uploads the file, and a second call finishes it:
 
 ```
-create_upload({ filename, contentType, size })  → { documentId, uploadUrl, curl }
-curl -T report.pdf -H 'Content-Type: application/pdf' '<uploadUrl>'
+create_upload({ filename, contentType, size })  → { documentId, uploadUrl, expiresAt, headers, curl }
+curl --fail-with-body -T report.pdf -H 'Content-Type: application/pdf' '<uploadUrl>'
 complete_upload({ documentId, share: {} })      → { document, shareLink }
 ```
+
+The upload URL works for 15 minutes and carries the type and size in its
+signature, so the bucket refuses any other file. `complete_upload` checks the
+size, hashes the file and makes it a document; calling it again answers the same
+document. An upload never completed is dropped, with whatever reached the
+bucket, after an hour. One PUT carries at most 5 GiB, and the limit in
+Settings → General applies too.
 
 The file path needs an agent with a shell (Claude Code and the like), and the
 agent's machine must reach the bucket at its public address. Claude Desktop or
 claude.ai without a shell can use only the text path.
 
 Either way, the common case is one call, or two calls and a `curl`. Every write
-tool tells the agent to give you `shareLink.url` and its expiry.
+tool tells the agent to give you `shareLink.url` and its expiry. A `share`
+that leaves something out takes your defaults from Settings → General, and the
+link is listed in Settings → Share links as made over MCP.
 
 ## Share links
 
@@ -114,10 +145,11 @@ ones that shape what you see:
   app. The environment holds only what is needed before anyone can sign in.
 - **The app's own uploads and downloads stream through the server.** No bucket
   CORS is needed, and every backend behaves the same.
-- **Only files uploaded through the app are documents.** Objects already in a
-  bucket are ignored.
-- **Buckets and their items, nothing nested.** Objects sit at the bucket's top
-  level, a dropped folder uploads flat, and tags are the only way to organise.
+- **Files already in a bucket become documents when you scan it.** Each stays
+  at its key; nothing is moved or renamed.
+- **Buckets and their items, nothing nested.** Uploads sit at the bucket's top
+  level, a dropped folder uploads flat, a scanned file's path is shown in its
+  title, and tags are the only way to organise.
 - **Bucket secrets and share URLs are encrypted at rest** with a key derived
   from `BETTER_AUTH_SECRET`, and the API never returns them in full.
 
@@ -204,7 +236,7 @@ container.
   of proxies in front, or every visitor shares the proxy's sign-in budget.
 - **Never set `SECURE_LOCAL_NET=true` on a reachable instance.** It makes an
   email address the whole credential.
-- **Treat an API key like a password** *(MCP planned)*. Anyone holding it can
+- **Treat an API key like a password**. Anyone holding it can
   reach every bucket you shared over MCP, and write to the writable ones.
   `SECURE_LOCAL_NET` never waives the key.
 - **A share link is a bearer URL.** Anyone who has it can open the file until it
@@ -227,8 +259,8 @@ npm run codegen
 npm run dev            # API on 3005, Vite dev server on 3001
 ```
 
-Open <http://localhost:3001>. The dev server proxies `/graphql` and the OIDC
-routes to the API, and outside production the magic link comes back in the
+Open <http://localhost:3001>. The dev server proxies `/graphql`, `/api`, `/mcp`
+and the OIDC routes to the API, and outside production the magic link comes back in the
 response, so the login page offers it as a link.
 
 ```bash
@@ -236,6 +268,15 @@ npm run check          # codegen, Biome and tsc --noEmit across all three worksp
 npm test               # Vitest: server on an in-memory Postgres, dom, and Storybook in Chromium
 npm run storybook      # Storybook on 6006
 npm run db:down        # stop Postgres and RustFS
+```
+
+The tests against a real bucket (the storage, the content routes, and the MCP
+acceptance test: upload, share, open the link, re-key) are skipped unless
+`S3AM_IT_ENDPOINT` is set. Against the dev RustFS:
+
+```bash
+S3AM_IT_ENDPOINT=http://localhost:9010 S3AM_IT_BUCKET=artifacts S3AM_IT_ACCESS_KEY=s3am \
+  S3AM_IT_SECRET_KEY=s3am-dev-secret npx vitest run --project node integration
 ```
 
 If the Docker daemon is not this machine (`docker context ls` shows a remote

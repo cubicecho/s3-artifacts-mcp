@@ -11,9 +11,9 @@ import {
 } from '@/components/domain/document-fixtures';
 import { AppLayout } from '@/components/layouts/app-layout';
 import { bucketDocumentsPath, documentPath, ROUTES } from '@/lib/routes';
+import { settingsLink } from '@/lib/settings-tabs';
 import { UploadSendContext } from '@/lib/upload';
 import { DocumentsRoute } from './documents';
-import { settingsLink } from './settings';
 
 /**
  * The documents page against a mock server built from the real SDL: no buckets, buckets with

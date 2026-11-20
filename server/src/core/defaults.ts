@@ -12,6 +12,12 @@ export interface HttpSettings {
   assetCacheDays: number;
   /** Express `trust proxy`: which hops may set X-Forwarded-For. False trusts none. `TRUST_PROXY` overrides it. */
   trustProxy: boolean | number | string;
+  /**
+   * The largest JSON body `/mcp/b/:slug` reads, in bytes. It stays above `MCP_DEFAULTS.inlineUploadBytes`, with room
+   * for the escaping JSON adds to text (`\n`, `\"`, `\uXXXX`), so an upload too large is refused by the tool, which
+   * says what to do instead.
+   */
+  mcpBodyLimitBytes: number;
 }
 
 /** The shipped values of `HttpSettings`. */
@@ -21,6 +27,7 @@ export const HTTP_DEFAULTS: Readonly<HttpSettings> = Object.freeze({
   shutdownDeadlineSeconds: 8,
   assetCacheDays: 365,
   trustProxy: false,
+  mcpBodyLimitBytes: 16_777_216,
 });
 
 /** The sign-in throttle. */
@@ -232,4 +239,33 @@ export interface ContentSettings {
 /** The shipped values of `ContentSettings`. */
 export const CONTENT_DEFAULTS: Readonly<ContentSettings> = Object.freeze({
   urlTtlMinutes: 15,
+});
+
+/** The MCP door, `/mcp/b/:slug`: what its tools send inline and what they hand out. */
+export interface McpSettings {
+  /** The largest text document `get_document` returns as text, in bytes. A larger one comes back as metadata. */
+  inlineTextBytes: number;
+  /** The largest image or PDF `get_document` returns as an embedded resource, in bytes. */
+  inlineBinaryBytes: number;
+  /** The most UTF-8 bytes of text `upload_document` takes. A larger file goes through `create_upload`. */
+  inlineUploadBytes: number;
+  /** How long the presigned PUT `create_upload` hands out works. Shorter than `UPLOAD_DEFAULTS.pendingTtlMinutes`. */
+  uploadUrlTtlMinutes: number;
+  /** How many documents `list_documents` answers with at most, and by default. */
+  pageSize: number;
+  /**
+   * The largest file `create_upload` takes, in bytes, whatever the owner's upload limit: a presigned PUT is one
+   * PutObject, which S3 caps at 5 GiB. A larger file is uploaded in the app, which sends it in parts.
+   */
+  maxPresignedPutBytes: number;
+}
+
+/** The shipped values of `McpSettings`. */
+export const MCP_DEFAULTS: Readonly<McpSettings> = Object.freeze({
+  inlineTextBytes: 262_144,
+  inlineBinaryBytes: 10_485_760,
+  inlineUploadBytes: 5_242_880,
+  uploadUrlTtlMinutes: 15,
+  pageSize: 50,
+  maxPresignedPutBytes: 5_368_709_120,
 });

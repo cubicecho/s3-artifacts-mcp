@@ -186,6 +186,15 @@ interface BucketServerOptions {
   hasDocuments?: boolean;
   /** What `scanBucket` answers: a result, or a refusal's message. Left out, it finds nothing. */
   scan?: BucketScanResult | string;
+  /** When set, `setBucketMcp` refuses with this message. */
+  mcpRefusal?: string;
+}
+
+/** What `setBucketMcp` was asked, in order. */
+export interface BucketMcpCall {
+  id: string;
+  enabled: boolean;
+  writable: boolean;
 }
 
 /** A scan that found every file listed already. */
@@ -230,10 +239,11 @@ interface BucketInputArgs {
  *
  * @param start - The buckets it starts with.
  * @param options - What its test answers, and what it refuses.
- * @returns The resolvers, and the list itself for a story to inspect.
+ * @returns The resolvers, the list itself, and every `setBucketMcp` call, for a story to inspect.
  */
 export function bucketServer(start: readonly BucketFixture[], options: BucketServerOptions = {}) {
   const buckets = start.map((bucket) => ({ ...bucket }));
+  const mcpCalls: BucketMcpCall[] = [];
   const refuseSave = () => {
     if (options.saveRefusal) {
       throw new GraphQLError(options.saveRefusal, { extensions: { code: 'BAD_USER_INPUT' } });
@@ -286,6 +296,24 @@ export function bucketServer(start: readonly BucketFixture[], options: BucketSer
         bucket.secretReadable = true;
         return bucket;
       },
+      setBucketMcp: (_parent: unknown, args: BucketMcpCall) => {
+        mcpCalls.push({ id: args.id, enabled: args.enabled, writable: args.writable });
+        if (options.mcpRefusal) {
+          throw new GraphQLError(options.mcpRefusal, { extensions: { code: 'BAD_USER_INPUT' } });
+        }
+        const bucket = buckets.find((entry) => entry.id === args.id);
+        if (bucket === undefined) {
+          throw new GraphQLError('No such bucket', { extensions: { code: 'NOT_FOUND' } });
+        }
+        // As the server: writable needs enabled.
+        if (args.writable && args.enabled === false) {
+          throw new GraphQLError('Turn MCP on for the bucket before making it writable.', {
+            extensions: { code: 'BAD_USER_INPUT' },
+          });
+        }
+        Object.assign(bucket, { mcpEnabled: args.enabled, mcpWritable: args.writable });
+        return bucket;
+      },
       deleteBucket: (_parent: unknown, args: { id: string; forgetDocuments?: boolean | null }) => {
         const isRefused = options.hasDocuments === true && args.forgetDocuments !== true;
         if (isRefused) {
@@ -301,5 +329,5 @@ export function bucketServer(start: readonly BucketFixture[], options: BucketSer
       },
     },
   };
-  return { resolvers, buckets };
+  return { resolvers, buckets, mcpCalls };
 }

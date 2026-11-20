@@ -82,6 +82,39 @@ export async function findReadyDocument(db: DB, id: unknown): Promise<Document |
 }
 
 /**
+ * Makes a pending document `ready` once its bytes are in its bucket, in one statement guarded on `pending_upload`.
+ *
+ * @param db - The database.
+ * @param id - The document.
+ * @param sha256 - The hex SHA-256 of the bytes stored.
+ * @returns Whether it was pending and is ready now. False when it was deleted meanwhile, or already ready.
+ */
+export async function markReady(db: DB, id: string, sha256: string): Promise<boolean> {
+  const updated = await db
+    .update(documents)
+    .set({ sha256, status: DocumentStatus.Ready })
+    .where(and(eq(documents.id, id), eq(documents.status, DocumentStatus.PendingUpload)))
+    .returning({ id: documents.id });
+  return updated.length > 0;
+}
+
+/**
+ * Restarts the sweeper's clock on a pending document, which counts from the row's last change, before a long step.
+ *
+ * @param db - The database.
+ * @param id - The document.
+ * @returns Whether it is still pending, so the step may go on.
+ */
+export async function claimPending(db: DB, id: string): Promise<boolean> {
+  const claimed = await db
+    .update(documents)
+    .set({ updatedAt: new Date() })
+    .where(and(eq(documents.id, id), eq(documents.status, DocumentStatus.PendingUpload)))
+    .returning({ id: documents.id });
+  return claimed.length > 0;
+}
+
+/**
  * Deletes a document's row while it is still waiting for its bytes. A row that became ready in the meantime
  * is left alone.
  *

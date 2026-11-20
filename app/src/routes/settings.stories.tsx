@@ -6,8 +6,9 @@ import { mergeResolvers, shareLinkFixture, sharingServer } from '@/components/do
 import { AppLayout } from '@/components/layouts/app-layout';
 import { clientId } from '@/lib/id';
 import { ROUTES } from '@/lib/routes';
+import { settingsLink } from '@/lib/settings-tabs';
 import { BYTES_PER_MEBIBYTE } from '@/lib/upload-limit';
-import { SettingsRoute, settingsLink } from './settings';
+import { SettingsRoute } from './settings';
 
 /**
  * The settings screen against a mock server built from the real SDL.
@@ -118,6 +119,7 @@ export const Ready: Story = {
     await expect(canvas.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
       'Buckets',
       'Share links',
+      'MCP',
       'General',
       'Auth',
       'API keys',
@@ -298,6 +300,22 @@ export const ShareLinks: Story = {
   },
 };
 
+/** The MCP tab: a bucket's switches and its endpoint, and the way to the keys agents sign in with. */
+export const Mcp: Story = {
+  parameters: {
+    router: at('mcp'),
+    apolloClient: { resolvers: withBuckets([{ ...MIXED_BUCKETS[0], mcpEnabled: true }]) },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true');
+    const bucket = within(await canvas.findByRole('region', { name: MIXED_BUCKETS[0].name }));
+    await expect(bucket.getByRole('switch', { name: 'Reachable over MCP' })).toBeChecked();
+    await expect(bucket.getByText(`${window.location.origin}/mcp/b/${MIXED_BUCKETS[0].slug}`)).toBeInTheDocument();
+    await userEvent.click(canvas.getByRole('link', { name: 'Manage API keys' }));
+    await expect(await canvas.findByRole('heading', { name: 'API keys' })).toBeInTheDocument();
+  },
+};
+
 const general = sharingServer([]);
 /** What the General story raises the upload limit to. */
 const RAISED_LIMIT_MIB = 500;
@@ -318,7 +336,7 @@ export const General: Story = {
   },
 };
 
-/** Phone width, on General: six tabs, the form and the expiry pills fit, and nothing pushes the page sideways. */
+/** Phone width, on General: seven tabs, the form and the expiry pills fit, and nothing pushes the page sideways. */
 export const NarrowGeneral: Story = {
   globals: { viewport: { value: 'mobile1' } },
   parameters: {

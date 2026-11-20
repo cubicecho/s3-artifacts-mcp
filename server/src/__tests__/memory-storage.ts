@@ -7,10 +7,11 @@ import { type BucketConnection, contentDisposition, type Storage, type StorageFa
 // Presigned URLs point at a host only the backend's `fetch` answers, so the bucket test's share-link
 // step and a share link run without a network. They carry the type and disposition they were signed
 // with as S3's do (`response-content-type`, `response-content-disposition`), and the fetch answers
-// with them.
+// with them. A presigned PUT carries the type and length it was signed for, and the fetch refuses a PUT that sends
+// others, as S3 refuses a request that does not match its signature.
 
 /** The operations a test can make fail. */
-export type MemoryOperation = Exclude<keyof Storage, 'presignGet'>;
+export type MemoryOperation = Exclude<keyof Storage, 'presignGet' | 'presignPut'>;
 
 /** One stored object. */
 export interface MemoryObject {
@@ -47,10 +48,14 @@ export interface MemoryBackend {
 /** The origin presigned URLs from a memory backend point at. */
 export const MEMORY_ORIGIN = 'http://memory.test';
 const NOT_FOUND = 404;
+const FORBIDDEN = 403;
 /** The query parameters a presigned GET carries, as S3 names them. */
 const EXPIRES_PARAM = 'expires';
 const CONTENT_TYPE_PARAM = 'response-content-type';
 const DISPOSITION_PARAM = 'response-content-disposition';
+/** The query parameters a presigned PUT carries: what it may store, standing in for the signed headers. */
+const PUT_TYPE_PARAM = 'put-content-type';
+const PUT_LENGTH_PARAM = 'put-content-length';
 /** A ListObjectsV2 page's size on S3. */
 const DEFAULT_PAGE_SIZE = 1000;
 
@@ -163,8 +168,44 @@ function createMemoryStorage(name: string): MemoryStorage {
       });
       return `${origin}/${name}/${encodeURIComponent(key)}?${params}`;
     },
+    async presignPut(key, { contentType, size, expiresInSeconds }) {
+      const origin = storage.publicOrigin ?? MEMORY_ORIGIN;
+      const params = new URLSearchParams({
+        [EXPIRES_PARAM]: String(expiresInSeconds),
+        [PUT_TYPE_PARAM]: contentType,
+        [PUT_LENGTH_PARAM]: String(size),
+      });
+      return `${origin}/${name}/${encodeURIComponent(key)}?${params}`;
+    },
   };
   return storage;
+}
+
+/**
+ * Answers a PUT to a presigned URL, as the service would: stored when it sends what was signed, refused otherwise.
+ *
+ * @param storage - The bucket the URL names.
+ * @param key - The key it names.
+ * @param url - The URL, whose parameters say what was signed.
+ * @param [init] - The request: its body and `Content-Type`.
+ * @returns 200, or 403 for a URL that was not signed for a PUT or a request that does not match it.
+ */
+async function storePresignedPut(
+  storage: MemoryStorage,
+  key: string,
+  url: URL,
+  init: RequestInit | undefined,
+): Promise<Response> {
+  const signedType = url.searchParams.get(PUT_TYPE_PARAM);
+  const signedLength = url.searchParams.get(PUT_LENGTH_PARAM);
+  const body = Buffer.from(await new Response(init?.body ?? null).arrayBuffer());
+  const contentType = new Headers(init?.headers).get('content-type');
+  const isSigned = signedType !== null && contentType === signedType && String(body.length) === signedLength;
+  if (isSigned === false) {
+    return new Response('<Error><Code>SignatureDoesNotMatch</Code></Error>', { status: FORBIDDEN });
+  }
+  storage.objects.set(key, { body, contentType: signedType });
+  return new Response(null);
 }
 
 /**
@@ -193,13 +234,17 @@ export function createMemoryBackend(): MemoryBackend {
       connections.push({ bucket: connection, secretAccessKey });
       return bucket(connection.bucket);
     },
-    fetch: async (input) => {
+    fetch: async (input, init) => {
       const url = new URL(String(input));
       const [, name, key] = url.pathname.split('/');
       const isOurs = url.origin === MEMORY_ORIGIN && storages.has(name);
       if (isOurs === false) {
         const refused = Object.assign(new Error(`connect ECONNREFUSED ${url.host}`), { code: 'ECONNREFUSED' });
         throw new TypeError('fetch failed', { cause: refused });
+      }
+      const isPut = (init?.method ?? 'GET').toUpperCase() === 'PUT';
+      if (isPut) {
+        return storePresignedPut(bucket(name), decodeURIComponent(key), url, init);
       }
       const object = bucket(name).objects.get(decodeURIComponent(key));
       if (object === undefined) {

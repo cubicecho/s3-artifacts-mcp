@@ -6,6 +6,7 @@ import { ApiKeySettings } from '@/components/domain/api-key-settings';
 import { LogOut } from '@/components/domain/app-icons';
 import { BucketSettings } from '@/components/domain/bucket-settings';
 import { GeneralSettings } from '@/components/domain/general-settings';
+import { McpSettings } from '@/components/domain/mcp-settings';
 import { ShareLinkSettings } from '@/components/domain/share-link-settings';
 import { SsoSettings } from '@/components/domain/sso-pairing';
 import { LoadState } from '@/components/load-state';
@@ -17,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ThemePicker } from '@/components/ui/theme-picker';
 import { FULL_WIDTH_BODY } from '@/lib/page';
 import { queryLike } from '@/lib/query';
-import { ROUTES } from '@/lib/routes';
+import { SETTINGS_TAB_PARAM, SETTINGS_TABS, settingsTabOf, tabSearch } from '@/lib/settings-tabs';
 import { useSignOut } from '@/lib/sign-out';
 import { cn } from '@/lib/utils';
 
@@ -30,55 +31,10 @@ const SettingsPage = graphql(`
   }
 `);
 
-/** The query-string key that holds the open tab, so a tab can be linked and survives a reload. */
-export const SETTINGS_TAB_PARAM = 'tab';
-
-/** The tabs, in order. The first is where an absent or unknown `?tab=` lands. */
-export const SETTINGS_TABS = [
-  { value: 'buckets', label: 'Buckets' },
-  { value: 'share-links', label: 'Share links' },
-  { value: 'general', label: 'General' },
-  { value: 'auth', label: 'Auth' },
-  { value: 'api-keys', label: 'API keys' },
-  { value: 'appearance', label: 'Appearance' },
-] as const;
-
-export type SettingsTab = (typeof SETTINGS_TABS)[number]['value'];
-
 /**
- * The tab `?tab=` names, or the first when it names none.
- *
- * @param requested - The query string's `tab`, if any.
- * @returns The tab to open.
- */
-export function settingsTabOf(requested: string | null): SettingsTab {
-  return SETTINGS_TABS.find((entry) => entry.value === requested)?.value ?? SETTINGS_TABS[0].value;
-}
-
-/**
- * The link a tab is: this page, with only the tab in its query string.
- *
- * @param tab - The tab to link to.
- * @returns The search part of the link, empty for the first tab.
- */
-function tabSearch(tab: SettingsTab): string {
-  return tab === SETTINGS_TABS[0].value ? '' : `?${new URLSearchParams({ [SETTINGS_TAB_PARAM]: tab })}`;
-}
-
-/**
- * A link to one tab of this page, for a page elsewhere that sends the reader here.
- *
- * @param tab - The tab to open.
- * @returns The path and query string.
- */
-export function settingsLink(tab: SettingsTab): string {
-  return `${ROUTES.settings}${tabSearch(tab)}`;
-}
-
-/**
- * The owner's settings, a tab each: the buckets documents are stored in, every share link, the
- * upload limit and link defaults, how they sign in, the API keys MCP clients use, and how the app
- * looks on this device. The open tab is in the URL
+ * The owner's settings, a tab each: the buckets documents are stored in, every share link, which
+ * buckets agents may reach over MCP, the upload limit and link defaults, how they sign in, the API
+ * keys MCP clients use, and how the app looks on this device. The open tab is in the URL
  * (`?tab=api-keys`); Buckets is first, so `/settings` opens there.
  *
  * @returns The settings page.
@@ -95,7 +51,7 @@ export function SettingsRoute() {
       <PageLayout
         iconSlot={<Settings />}
         title="Settings"
-        description="Where documents are stored, how they are shared, how you sign in, the keys MCP clients use, and how this looks."
+        description="Where documents are stored, how they are shared, which buckets agents may reach, how you sign in, and how this looks."
         width="full"
         headerContentSlot={
           <TabsList aria-label="Settings">
@@ -128,6 +84,10 @@ export function SettingsRoute() {
 
                 <TabsContent value="share-links" className="flex flex-col gap-6">
                   <ShareLinkSettings />
+                </TabsContent>
+
+                <TabsContent value="mcp" className="flex flex-col gap-6">
+                  <McpSettings />
                 </TabsContent>
 
                 <TabsContent value="general" className="flex flex-col gap-6">

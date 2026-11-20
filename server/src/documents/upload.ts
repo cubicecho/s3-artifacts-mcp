@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Transform } from 'node:stream';
 import type { DB } from '@cubicecho/s3-artifacts-mcp-db';
-import { type Document, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
-import { and, eq } from 'drizzle-orm';
+import { type Document, DocumentStatus } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import type { Request, Response } from 'express';
 import { describeBytes, readAppSettings, uploadLimitOf } from '../app-settings/app-settings.ts';
 import { ErrorCode, errorMessage } from '../core/errors.ts';
@@ -11,7 +10,7 @@ import { RouteError, sendRouteError } from '../http/route-error.ts';
 import type { StorageRegistry } from '../storage/registry.ts';
 import { describeStorageError, type Storage } from '../storage/storage.ts';
 import { openBucketStorage } from './bucket-storage.ts';
-import { DOCUMENT_NOT_FOUND, deletePendingRow, findOwnedDocument } from './rows.ts';
+import { claimPending, DOCUMENT_NOT_FOUND, deletePendingRow, findOwnedDocument, markReady } from './rows.ts';
 
 // `PUT /api/documents/:id/content`: a pending document's bytes, streamed from the browser through
 // the server into its bucket (D4), hashed and counted on the way. The body must be exactly the
@@ -147,15 +146,8 @@ export function createUploadHandler({ db, storage: registry }: UploadRouteDeps) 
       );
     }
     const sha256 = meter.sha256();
-    const ready = await db.transaction(async (tx) => {
-      const isPendingDocument = and(eq(documents.id, document.id), eq(documents.status, DocumentStatus.PendingUpload));
-      return tx
-        .update(documents)
-        .set({ sha256, status: DocumentStatus.Ready })
-        .where(isPendingDocument)
-        .returning({ id: documents.id });
-    });
-    if (ready.length === 0) {
+    const isReady = await markReady(db, document.id, sha256);
+    if (isReady === false) {
       // Deleted while it was uploading, by its owner or by the sweeper. The object goes too.
       throw new RouteError(HttpStatus.NotFound, ErrorCode.NotFound, DOCUMENT_NOT_FOUND);
     }
@@ -235,13 +227,8 @@ export function createUploadHandler({ db, storage: registry }: UploadRouteDeps) 
           `The request declares ${length} bytes, but the upload was started for ${document.size}.`,
         );
       }
-      // Restarts the sweeper's clock, which counts from the row's last change.
-      const claimed = await db
-        .update(documents)
-        .set({ updatedAt: new Date() })
-        .where(and(eq(documents.id, document.id), eq(documents.status, DocumentStatus.PendingUpload)))
-        .returning({ id: documents.id });
-      if (claimed.length === 0) {
+      const isClaimed = await claimPending(db, document.id);
+      if (isClaimed === false) {
         throw new RouteError(HttpStatus.NotFound, ErrorCode.NotFound, DOCUMENT_NOT_FOUND);
       }
       storage = await openBucketStorage(registry, document.bucketId);

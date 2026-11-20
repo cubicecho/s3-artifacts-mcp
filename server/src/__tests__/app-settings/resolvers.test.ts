@@ -133,6 +133,7 @@ describe('app settings', () => {
     [1_048_576, '1 MiB'],
     [53_687_091_200, '50 GiB'],
     [1_610_612_736, '1536 MiB'],
+    [262_144, '256 KiB'],
   ])('writes %i bytes as %s', (bytes, written) => {
     expect(describeBytes(bytes)).toBe(written);
   });
