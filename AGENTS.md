@@ -87,7 +87,7 @@ s3-artifacts-mcp/
 │       ├── api-keys/        # resolvers: list, make and revoke the caller's API keys
 │       ├── buckets/         # presets, input (validation, slugs), test (the connection probe), sdl, resolvers
 │       ├── storage/         # storage (the Storage interface), s3 (one bucket), registry (all of them)
-│       ├── documents/       # keys, create, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
+│       ├── documents/       # keys, create, scan, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
 │       └── __tests__/       # Server tests, in the same folders as src; helpers.ts at the root
 ├── db/
 │   ├── drizzle/             # Generated migrations (committed)
@@ -362,6 +362,19 @@ client gone) aborts the multipart upload and deletes the object and the row.
 The sweeper (`documents/sweep.ts`, started only in `index.ts`) drops pending
 rows idle past `UPLOAD_DEFAULTS.pendingTtlMinutes`. Lists show `ready` only.
 Object keys are `<uuid>-<ascii filename>` at the bucket's top level.
+
+**A scan makes the files already in a bucket documents, where they are.**
+`scanBucket` (`documents/scan.ts`) lists the bucket a page at a time and adds
+a `ready` row for each key no document has: filename is the key's last
+segment, title the key without its extension, type guessed by `mrmime`, no
+sha256. It never reads, moves or renames an object. Folder markers (`…/`) and
+the bucket test's probe are passed over; a key with control characters or a
+too-long name is skipped and reported. The unique `(bucket_id, object_key)`
+index with `ON CONFLICT DO NOTHING` makes a repeat or a racing scan add
+nothing twice. One scan adds at most `SCAN_DEFAULTS.maxImports`, then says
+`truncated`; the next carries on. A key with a `/` in it is still shown flat
+(D11). Deleting a scanned document deletes the owner's object, as for any
+document.
 
 **The content routes are same-origin and must stay safe as such.**
 `/api/documents/:id/content` is served from the app's own origin, so an

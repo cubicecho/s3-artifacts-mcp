@@ -6,6 +6,7 @@ import {
   MINIO_BUCKET,
   MIXED_BUCKETS,
   S3_BUCKET,
+  SCAN_ADDED,
   TEST_FAILED,
   TEST_PASSED,
   TEST_WARNED,
@@ -173,6 +174,53 @@ export const TestWarns: Story = {
     await expect(report.getByText('Works, but share links may not open')).toBeInTheDocument();
     await expect(report.getByText('Warning')).toBeInTheDocument();
     await expect(report.queryByText('Failed')).not.toBeInTheDocument();
+  },
+};
+
+/** Scanning from the row's menu: the report opens under that row and names what was added and what was not. */
+export const Scans: Story = {
+  parameters: { apolloClient: { resolvers: bucketServer(MIXED_BUCKETS, { scan: SCAN_ADDED }).resolvers } },
+  play: async ({ canvas, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(await canvas.findByRole('button', { name: 'More for Backups' }));
+    await userEvent.click(await page.findByRole('menuitem', { name: 'Scan for files' }));
+    const report = within(await canvas.findByRole('region', { name: 'Scan of Backups' }));
+    await expect(report.getByText('Added 12 files from “Backups”')).toBeInTheDocument();
+    await expect(report.getByRole('list', { name: 'Files not added' })).toBeInTheDocument();
+  },
+};
+
+/** A bucket whose secret is unreadable cannot be scanned until the secret is entered again. */
+export const ScanNeedsTheSecret: Story = {
+  parameters: {
+    apolloClient: { resolvers: bucketServer([MINIO_BUCKET, { ...S3_BUCKET, secretReadable: false }]).resolvers },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await userEvent.click(await canvas.findByRole('button', { name: 'More for Reports' }));
+    const item = await within(canvasElement.ownerDocument.body).findByRole('menuitem', { name: 'Scan for files' });
+    await expect(item).toHaveAttribute('aria-disabled', 'true');
+    // Closed again, so the page is not left hidden behind an open menu.
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(item).not.toBeInTheDocument());
+  },
+};
+
+/** A bucket that will not be listed: the refusal, under its row. */
+export const ScanRefused: Story = {
+  parameters: {
+    apolloClient: {
+      resolvers: bucketServer(MIXED_BUCKETS, {
+        scan: 'The bucket refused to list its files (AccessDenied). The access key needs permission to list the bucket.',
+      }).resolvers,
+    },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(await canvas.findByRole('button', { name: 'More for Backups' }));
+    await userEvent.click(await page.findByRole('menuitem', { name: 'Scan for files' }));
+    const alert = await canvas.findByRole('alert');
+    await expect(alert).toHaveTextContent('Could not scan “Backups”');
+    await expect(alert).toHaveTextContent(/permission to list/);
   },
 };
 

@@ -1,6 +1,7 @@
 import { GraphQLError } from 'graphql';
 import type { BucketPresetsQuery, BucketProvider } from '@/__generated__/graphql';
 import type { BucketTestOutcome } from '@/components/domain/bucket-test-report';
+import type { BucketScanResult } from '@/lib/bucket-scan';
 import { clientId } from '@/lib/id';
 
 // Buckets and presets as the server answers them, for the stories' mock servers. The mock
@@ -183,7 +184,33 @@ interface BucketServerOptions {
   saveRefusal?: string;
   /** When set, `deleteBucket` without `forgetDocuments` refuses as the server does while documents remain. */
   hasDocuments?: boolean;
+  /** What `scanBucket` answers: a result, or a refusal's message. Left out, it finds nothing. */
+  scan?: BucketScanResult | string;
 }
+
+/** A scan that found every file listed already. */
+export const SCAN_NOTHING_NEW: BucketScanResult = {
+  imported: 0,
+  alreadyListed: 0,
+  skippedCount: 0,
+  skipped: [],
+  truncated: false,
+};
+
+/** Longer than the 255 characters a filename may be. */
+const SKIPPED_NAME_LENGTH = 300;
+
+/** A scan that added files, found some listed already, and could not add two. */
+export const SCAN_ADDED: BucketScanResult = {
+  imported: 12,
+  alreadyListed: 3,
+  skippedCount: 2,
+  skipped: [
+    { key: 'exports/bad\nname.csv', reason: 'A filename cannot contain control characters.' },
+    { key: `archive/${'x'.repeat(SKIPPED_NAME_LENGTH)}.txt`, reason: 'A filename can be at most 255 characters.' },
+  ],
+  truncated: false,
+};
 
 /** `BucketInput` as a mutation receives it. */
 interface BucketInputArgs {
@@ -219,6 +246,12 @@ export function bucketServer(start: readonly BucketFixture[], options: BucketSer
     },
     Mutation: {
       testBucket: () => options.test ?? TEST_PASSED,
+      scanBucket: () => {
+        if (typeof options.scan === 'string') {
+          throw new GraphQLError(options.scan, { extensions: { code: 'STORAGE_ERROR' } });
+        }
+        return options.scan ?? SCAN_NOTHING_NEW;
+      },
       createBucket: (_parent: unknown, args: { input: BucketInputArgs }) => {
         refuseSave();
         const { input } = args;

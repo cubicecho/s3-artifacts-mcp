@@ -207,6 +207,42 @@ export const FilteredToAnEmptyBucket: Story = {
 };
 
 /**
+ * Nothing listed yet, but files already in a bucket: scanning adds them, the table shows them, and each
+ * bucket's report stays over it.
+ */
+export const ScansForExistingFiles: Story = {
+  parameters: withServer([MINIO_BUCKET, S3_BUCKET], [], {
+    bucketFiles: { [MINIO_BUCKET.id]: ['2024/notes.txt', 'readme.txt'] },
+  }).parameters,
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByRole('heading', { level: 2, name: 'No documents yet' })).toBeVisible();
+    await userEvent.click(canvas.getByRole('button', { name: 'Scan for files' }));
+    await waitFor(async () => expect(await tableRows(canvasElement)).toHaveLength(2));
+    await expect(canvas.getByRole('link', { name: '2024/notes' })).toBeInTheDocument();
+    await expect(canvas.getByText(`Added 2 files from “${MINIO_BUCKET.name}”`)).toBeInTheDocument();
+    await expect(canvas.getByText(`Nothing new in “${S3_BUCKET.name}”`)).toBeInTheDocument();
+  },
+};
+
+/** An empty bucket in the filter: scanning it scans that bucket alone. */
+export const ScansTheFilteredBucket: Story = {
+  parameters: {
+    ...withServer([MINIO_BUCKET, B2_BUCKET], [PDF_DOCUMENT], {
+      bucketFiles: { [B2_BUCKET.id]: ['old-backup.txt'], [MINIO_BUCKET.id]: ['not-this-one.txt'] },
+    }).parameters,
+    router: { initialEntries: [bucketDocumentsPath(B2_BUCKET.slug)] },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByText('Nothing in “Backups” yet.')).toBeInTheDocument();
+    await userEvent.click(canvas.getByRole('button', { name: 'Scan it for files' }));
+    await waitFor(async () => expect(await tableRows(canvasElement)).toHaveLength(1));
+    await expect(canvas.getByRole('link', { name: 'old-backup' })).toBeInTheDocument();
+    await expect(canvas.getByText('Added 1 file from “Backups”')).toBeInTheDocument();
+    await expect(canvas.queryByText(new RegExp(MINIO_BUCKET.name))).not.toBeInTheDocument();
+  },
+};
+
+/**
  * Phone width: there is no sidebar, so the table is the way to every document. It fits the
  * screen, with the type and date columns left out, and nothing scrolls sideways.
  */

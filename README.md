@@ -22,6 +22,10 @@ endpoint.
 - **Upload**: from the app, a batch of files (a dropped folder uploads flat),
   each with its own progress bar, up to 100 MiB each for now. From an agent
   over MCP *(planned)*.
+- **Scan a bucket** for the files already in it, put there by anything else:
+  each becomes a document where it is, nothing moved or renamed. Scanning
+  again adds only what is new. The access key needs permission to list the
+  bucket.
 - **Preview**: PDFs, images, audio, video, text and Markdown open on the
   document's page, which also renames, downloads and deletes it. Uploaded HTML
   is never shown in the app, only downloaded.

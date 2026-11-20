@@ -235,6 +235,11 @@ interface DocumentServerOptions {
   deleteRefusal?: string;
   /** When set, `renameDocument` refuses with this message. */
   renameRefusal?: string;
+  /**
+   * Files already in each bucket, by bucket id, put there by something else: what `scanBucket` finds. A key a
+   * document already has is counted as listed.
+   */
+  bucketFiles?: Readonly<Record<string, readonly string[]>>;
   /** What `contentUrl` answers for a document, overriding its `content`, by how many times it was asked. */
   contentUrl?: (document: DocumentFixture, asked: number, download: boolean) => string;
 }
@@ -360,6 +365,30 @@ export function documentServer(
         };
         documents.push(document);
         return { document, uploadPath: `/api/documents/${id}/content` };
+      },
+      scanBucket: (_parent: unknown, args: { id: string }) => {
+        const bucket = buckets.find((entry) => entry.id === args.id);
+        if (bucket === undefined) {
+          throw new GraphQLError('No such bucket', { extensions: { code: 'NOT_FOUND' } });
+        }
+        let imported = 0;
+        let alreadyListed = 0;
+        for (const key of options.bucketFiles?.[bucket.id] ?? []) {
+          const isListed = documents.some((entry) => entry.bucketId === bucket.id && entry.objectKey === key);
+          if (isListed) {
+            alreadyListed += 1;
+            continue;
+          }
+          const filename = key.slice(key.lastIndexOf('/') + 1);
+          documents.push({
+            ...documentFixture(bucket, { title: key.replace(/\.[^./]*$/, ''), filename, contentType: 'text/plain' }),
+            objectKey: key,
+            sha256: null,
+            createdAt: new Date().toISOString(),
+          });
+          imported += 1;
+        }
+        return { imported, alreadyListed, skippedCount: 0, skipped: [], truncated: false };
       },
       renameDocument: (_parent: unknown, args: { id: string; title: string }) => {
         if (options.renameRefusal) {

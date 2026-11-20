@@ -6,6 +6,7 @@ import type { BucketSettingsQuery } from '@/__generated__/graphql';
 import { CardLayout } from '@/components/card-layout';
 import { ConfirmButton } from '@/components/confirm-button';
 import { BucketFormDialog, type EditableBucket } from '@/components/domain/bucket-form-dialog';
+import { BucketScanReport } from '@/components/domain/bucket-scan-report';
 import { BucketSecretDialog } from '@/components/domain/bucket-secret-dialog';
 import { type BucketTestOutcome, BucketTestReport } from '@/components/domain/bucket-test-report';
 import { EmptyState } from '@/components/empty-state';
@@ -16,9 +17,10 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Ellipsis, KeyRound, Pencil, PlugZap, Plus, Trash2 } from '@/components/ui/icons';
+import { Ellipsis, KeyRound, Pencil, PlugZap, Plus, ScanSearch, Trash2 } from '@/components/ui/icons';
 import { ItemDescription, ItemTitle } from '@/components/ui/item';
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '@/components/ui/menu';
+import { type BucketScanState, useBucketScan } from '@/lib/bucket-scan';
 import { messageOf } from '@/lib/error-message';
 import { joinStats } from '@/lib/format';
 import { LIBRARY_QUERIES } from '@/lib/library';
@@ -133,8 +135,8 @@ function isInUse(error: unknown): boolean {
 
 /**
  * Settings' Buckets card: where documents are stored. Each bucket is on its own provider and
- * account, so a row says which, and where. A bucket can be tested, edited and removed;
- * a secret that can no longer be read says so and asks for it again.
+ * account, so a row says which, and where. A bucket can be tested, scanned for the files already
+ * in it, edited and removed; a secret that can no longer be read says so and asks for it again.
  *
  * @returns The card, and the add/edit dialog or the remove question while one is open.
  */
@@ -151,6 +153,7 @@ export function BucketSettings() {
   const [rekeying, setRekeying] = useState<BucketRow | null>(null);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [tests, setTests] = useState<Record<string, TestState>>({});
+  const { scans, scan } = useBucketScan();
   const buckets = sorted(result.data?.buckets ?? []);
   const presets = result.data?.bucketPresets ?? [];
 
@@ -251,6 +254,8 @@ export function BucketSettings() {
                     providerLabel={providerOf(bucket)}
                     test={tests[bucket.id]}
                     onTest={() => void test(bucket)}
+                    scan={scans[bucket.id]}
+                    onScan={() => void scan(bucket.id)}
                     onEdit={() => setEditing(bucket)}
                     onReenterSecret={() => setRekeying(bucket)}
                     onRemove={() => setRemoving(bucket)}
@@ -301,6 +306,10 @@ interface BucketListRowProps {
   /** Its last test, if one was run here. */
   test: TestState | undefined;
   onTest: () => void;
+  /** Its last scan, if one was run here. */
+  scan: BucketScanState | undefined;
+  /** Adds the files already in the bucket as documents. */
+  onScan: () => void;
   onEdit: () => void;
   /** Opens the secret-only dialog, for a bucket whose stored secret no longer opens. */
   onReenterSecret: () => void;
@@ -309,12 +318,22 @@ interface BucketListRowProps {
 
 /**
  * One bucket in the list: its name, which provider and where, and its
- * actions. A test's report opens under the row.
+ * actions. A test's or a scan's report opens under the row.
  *
  * @param props - The bucket, its last test, and what each action calls.
  * @returns The row.
  */
-function BucketListRow({ bucket, providerLabel, test, onTest, onEdit, onReenterSecret, onRemove }: BucketListRowProps) {
+function BucketListRow({
+  bucket,
+  providerLabel,
+  test,
+  onTest,
+  scan,
+  onScan,
+  onEdit,
+  onReenterSecret,
+  onRemove,
+}: BucketListRowProps) {
   const isUnreadable = bucket.secretReadable === false;
 
   return (
@@ -364,6 +383,12 @@ function BucketListRow({ bucket, providerLabel, test, onTest, onEdit, onReenterS
                 />
               </MenuTrigger>
               <MenuContent align="end">
+                <MenuItem
+                  iconSlot={<ScanSearch />}
+                  label="Scan for files"
+                  disabled={isUnreadable || scan?.running === true}
+                  onSelect={onScan}
+                />
                 <MenuItem iconSlot={<Pencil />} label="Edit" onSelect={onEdit} />
                 <MenuSeparator />
                 <MenuItem iconSlot={<Trash2 />} label="Remove" destructive onSelect={onRemove} />
@@ -380,6 +405,11 @@ function BucketListRow({ bucket, providerLabel, test, onTest, onEdit, onReenterS
       {test?.outcome && (
         <div className="px-3 pb-2">
           <BucketTestReport outcome={test.outcome} />
+        </div>
+      )}
+      {scan && (
+        <div className="px-3 pb-2">
+          <BucketScanReport bucketName={bucket.name} scan={scan} />
         </div>
       )}
     </div>

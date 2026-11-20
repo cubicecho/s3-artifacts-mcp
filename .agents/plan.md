@@ -47,7 +47,7 @@ anyone can sign in (see "Environment").
 | D3 | **Buckets are managed by the owner in Settings**; any bucket can receive uploads. **There is no default bucket:** every upload names its bucket. | MCP is per bucket, so an agent's bucket is its endpoint. In the app the upload panel preselects the bucket open in the tree, else the only one, else the last used (kept in the browser). |
 | D4 | **The app's own uploads and downloads stream through the server.** | No bucket CORS is needed for the app, and every backend behaves the same. The server carries the traffic. |
 | D5 | **Share links are presigned URLs on the bucket itself**, not links to the app. | The browser fetches straight from the bucket, so the app is not in the path. Consequences in "Share links". |
-| D6 | **Only files uploaded through the app are documents.** Existing objects in a bucket are ignored. | A "Scan bucket" import is listed under "Later". |
+| D6 | **Files already in a bucket become documents only when the owner scans it** (`scanBucket`). A scan adds a `ready` row per object no document points at, keeping its key; nothing is read, moved or renamed. | Unique `(bucket_id, object_key)` makes a scan safe to repeat or race. No checksum (the bytes are never read); the type is guessed from the extension. |
 | D7 | **MCP is read-only by default; `mcp_writable` per bucket** allows upload and tagging. | |
 | D8 | **Tags are the owner's** (`user_id`), unique by name ignoring case. | |
 | D9 | **No passwords on share links.** They get a permission and an expiry. | |
@@ -260,7 +260,7 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 - **Limits that come from S3, which the UI states:**
   - **Expiry is capped at 7 days** (SigV4's maximum, on AWS, MinIO and RustFS alike). The expiry picker offers 1 hour to 7 days and no "never". `SHARE_LINK_DEFAULTS.maxExpiryHours = 168`.
   - **A single link cannot be revoked before it expires.** S3 checks the signature, not our database.
-  - **"Revoke all links" re-keys the document** (`rekeyDocument`). It copies the object to `<new objectId>-<filename>`, deletes the old key, updates `object_key`, and marks every link signed for the old key as revoked. Their URLs now answer 404 from the bucket. It is offered on the document page and confirmed with `ConfirmButton`.
+  - **"Revoke all links" re-keys the document** (`rekeyDocument`). It copies the object to `<new objectId>-<filename>`, deletes the old key, updates `object_key`, and marks every link signed for the old key as revoked. Their URLs now answer 404 from the bucket. It is offered on the document page and confirmed with `ConfirmButton`. A scanned document's object is wherever the owner put it, so re-keying one moves their file to an app-made key; the confirm says so.
   - **Rotating the bucket's access key** also kills every link signed with it. The bucket form says so when the access key changes.
   - **`view` is not copy protection.** It only asks the browser to show the file inline, and the form's help text says so.
 - **Listing and deleting.** `deleteShareLink` removes a link from the list and is labelled "Remove from list". It does not stop the URL, and the confirm text says so.
@@ -352,7 +352,7 @@ by `user_id`. Every generated write is off, as in Engrafo. The hand-written
 mutations:
 
 - **Buckets:** `testBucket`, `createBucket`, `updateBucket`, `setBucketSecret`, `setBucketMcp(enabled, writable)`, `deleteBucket(forgetDocuments)`
-- **Documents:** `createDocumentUpload`, `renameDocument`, `deleteDocument` (row and object), `rekeyDocument`
+- **Documents:** `createDocumentUpload`, `scanBucket`, `renameDocument`, `deleteDocument` (row and object), `rekeyDocument`
 - **Tags:** `createTag`, `updateTag`, `deleteTag`, `setDocumentTags`, `bulkTagDocuments`
 - **Share links:** `createShareLink`, `deleteShareLink`, and `ShareLink.url` as a resolved field that decrypts for the owner's session
 - **Settings:** `updateAppSettings`
@@ -428,7 +428,6 @@ Each step is one or more Conventional Commits, and each ends green.
 
 - More accounts and per-user document shares: add a `document_shares` table and widen the `documents` scope to "owner or shared".
 - Share links that go through the app, for instant revocation, no 7-day cap and download counts.
-- "Scan bucket" to import objects that already exist.
 - Moving documents between buckets.
 - API keys limited to chosen buckets.
 - Link passwords.

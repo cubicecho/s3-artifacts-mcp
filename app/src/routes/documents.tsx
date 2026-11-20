@@ -3,14 +3,16 @@ import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { Combobox } from '@/components/combobox';
 import { Database } from '@/components/domain/app-icons';
+import { BucketScanReport } from '@/components/domain/bucket-scan-report';
 import { UploadDialog } from '@/components/domain/upload-dialog';
 import { EmptyState } from '@/components/empty-state';
 import { FormField } from '@/components/form-field';
 import { LoadState } from '@/components/load-state';
 import { PageLayout } from '@/components/page-layout';
 import { Button } from '@/components/ui/button';
-import { FileText, Plus, Upload } from '@/components/ui/icons';
+import { FileText, Plus, ScanSearch, Upload } from '@/components/ui/icons';
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { useBucketScan } from '@/lib/bucket-scan';
 import { typeLabel } from '@/lib/document-type';
 import { formatBytes, formatDate } from '@/lib/format';
 import { LIBRARY_QUERIES, Library, type LibraryBucket, type LibraryDocument, sortBuckets } from '@/lib/library';
@@ -32,7 +34,8 @@ interface Row {
  * The documents, across every bucket or in the one the query string names (`?bucket=<slug>`),
  * newest first. Every row is a link to its document's page, which is how a phone, with no
  * sidebar, reaches each one. Until a bucket is set up there is nowhere to upload to, so the page
- * says so and links to Settings → Buckets.
+ * says so and links to Settings → Buckets. A bucket with no documents can be scanned for the files
+ * already in it, and the scan's report stays over the list once they arrive.
  *
  * @returns The documents page.
  */
@@ -41,6 +44,7 @@ export function DocumentsRoute() {
   const client = useApolloClient();
   const [params, setParams] = useSearchParams();
   const [uploading, setUploading] = useState(false);
+  const { scans, scan } = useBucketScan();
 
   const buckets = useMemo(() => sortBuckets(result.data?.buckets ?? []), [result.data]);
   const slug = params.get(BUCKET_FILTER_PARAM);
@@ -70,6 +74,30 @@ export function DocumentsRoute() {
       },
       { replace: true },
     );
+
+  const scannable = (filtered ? [filtered] : buckets).filter((bucket) => bucket.secretReadable);
+  const isScanning = scannable.some((bucket) => scans[bucket.id]?.running === true);
+  const scanAll = async () => {
+    for (const bucket of scannable) {
+      await scan(bucket.id);
+    }
+  };
+  const scanButton = (size: 'sm' | 'xs') =>
+    scannable.length > 0 ? (
+      <Button
+        variant="outline"
+        size={size}
+        iconSlot={<ScanSearch />}
+        content={filtered ? 'Scan it for files' : 'Scan for files'}
+        loading={isScanning}
+        loadingLabel="Scanning…"
+        onClick={() => void scanAll()}
+      />
+    ) : null;
+  const reports = buckets.flatMap((bucket) => {
+    const state = scans[bucket.id];
+    return state ? [<BucketScanReport key={bucket.id} bucketName={bucket.name} scan={state} />] : [];
+  });
 
   const uploadButton = (
     <Button variant="info" size="sm" iconSlot={<Upload />} content="Upload" onClick={() => setUploading(true)} />
@@ -101,8 +129,13 @@ export function DocumentsRoute() {
         level={2}
         iconSlot={<FileText />}
         title="No documents yet"
-        description="Upload files into one of your buckets. Each one gets a page here, with a preview and a download."
-        actionSlot={uploadButton}
+        description="Upload files into one of your buckets, or scan them for the files already there. Each one gets a page here, with a preview and a download."
+        actionSlot={
+          <div className="flex flex-wrap justify-center gap-2">
+            {uploadButton}
+            {scanButton('sm')}
+          </div>
+        }
       />
     );
   } else {
@@ -128,7 +161,10 @@ export function DocumentsRoute() {
             compact
             title={`Nothing in “${filtered?.name ?? ''}” yet.`}
             actionSlot={
-              <Button variant="outline" size="xs" content="Upload into it" onClick={() => setUploading(true)} />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="xs" content="Upload into it" onClick={() => setUploading(true)} />
+                {scanButton('xs')}
+              </div>
             }
           />
         ) : (
@@ -147,7 +183,16 @@ export function DocumentsRoute() {
         description="Everything you have uploaded, in every bucket."
         actionSlot={buckets.length > 0 ? uploadButton : undefined}
         contentClassName={FULL_WIDTH_BODY}
-        contentSlot={body}
+        contentSlot={
+          reports.length > 0 ? (
+            <div className="grid gap-4">
+              <div className="grid gap-2">{reports}</div>
+              {body}
+            </div>
+          ) : (
+            body
+          )
+        }
       />
       {uploading && (
         <UploadDialog
