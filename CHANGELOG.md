@@ -1,3 +1,15 @@
+# [1.1.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.0.0...v1.1.0) (2026-11-20)
+
+### Features
+
+* add buckets on any S3-compatible provider, managed in settings ([5d75d73](https://github.com/cubicecho/s3-artifacts-mcp/commit/5d75d7363da75858e9e12410744bb1bea71c6273))
+* **app:** re-enter a bucket's secret on its own, through setBucketSecret ([136825a](https://github.com/cubicecho/s3-artifacts-mcp/commit/136825a9bce38132213dc7261d84380af803dd37))
+* **app:** scan buckets from settings and the documents page ([3b1cffc](https://github.com/cubicecho/s3-artifacts-mcp/commit/3b1cffc4cafe7f619dd2c883e133e566f37312dc))
+* **app:** upload, browse and preview documents ([d9bcee1](https://github.com/cubicecho/s3-artifacts-mcp/commit/d9bcee1ec6e37939d390ce62dbe1dbf26715fb3e))
+* drop the default bucket ([23e4136](https://github.com/cubicecho/s3-artifacts-mcp/commit/23e4136ae08f3e47289b2362aad96e216919aebd))
+* **server:** scan a bucket for the files already in it ([dbf635f](https://github.com/cubicecho/s3-artifacts-mcp/commit/dbf635f68c8c3b9d6bd80f74297403d149bc0811))
+* **server:** store documents in buckets, streamed through the server ([42e9331](https://github.com/cubicecho/s3-artifacts-mcp/commit/42e93319c3d4815727fa55b55ff67c7529eff3fa))
+
 # 1.0.0 (2026-11-20)
 
 ### Features
