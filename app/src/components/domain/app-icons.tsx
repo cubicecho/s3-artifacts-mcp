@@ -1,4 +1,9 @@
-import { Database as DatabaseSource, LogOut as LogOutSource } from 'lucide-react';
+import {
+  Ban as BanSource,
+  Database as DatabaseSource,
+  Link2 as Link2Source,
+  LogOut as LogOutSource,
+} from 'lucide-react';
 import { icon } from '@/components/ui/icons';
 
 // Glyphs this app needs that `@cubeui/icons` does not carry, wrapped the way it
@@ -8,3 +13,7 @@ import { icon } from '@/components/ui/icons';
 export const LogOut = icon(LogOutSource);
 /** A bucket: where documents are stored. */
 export const Database = icon(DatabaseSource);
+/** A share link. */
+export const Link2 = icon(Link2Source);
+/** A share link that was revoked. */
+export const Ban = icon(BanSource);

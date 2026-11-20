@@ -6,6 +6,7 @@ import { graphql } from '@/__generated__';
 import { ConfirmButton } from '@/components/confirm-button';
 import { DocumentDetailsCard } from '@/components/domain/document-details-card';
 import { DocumentPreviewCard } from '@/components/domain/document-preview-card';
+import { DocumentShareLinks } from '@/components/domain/document-share-links';
 import { RenameDocumentDialog } from '@/components/domain/rename-document-dialog';
 import { LoadState } from '@/components/load-state';
 import { PageLayout } from '@/components/page-layout';
@@ -71,7 +72,7 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
- * One document: its preview, its details, and Rename, Download and Delete in the header. A
+ * One document: its preview, its share links, its details, and Rename, Download and Delete in the header. A
  * document that is not there, or not the owner's, is a not-found page rather than an error.
  *
  * @returns The document page.
@@ -167,7 +168,8 @@ export function DocumentRoute() {
           <div className="grid gap-4 pb-4">
             {failure && <Alert variant="destructive" title={failure.title} description={failure.message} />}
             {isReady ? (
-              <DocumentPreviewCard document={document} />
+              // Keyed by the object, so a re-key asks for a preview URL signed for the new key.
+              <DocumentPreviewCard key={document.objectKey} document={document} />
             ) : (
               <Alert
                 variant="warning"
@@ -175,6 +177,7 @@ export function DocumentRoute() {
                 description="Its bytes have not all reached the bucket. Upload the file again if it does not finish."
               />
             )}
+            <DocumentShareLinks document={document} />
             <DocumentDetailsCard document={document} />
           </div>
         }

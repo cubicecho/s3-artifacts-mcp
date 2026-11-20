@@ -9,6 +9,7 @@ import {
   MIXED_DOCUMENTS,
   PDF_DOCUMENT,
 } from '@/components/domain/document-fixtures';
+import { mergeResolvers, shareLinkFixture, shareLinkServer } from '@/components/domain/share-link-fixtures';
 import { bucketDocumentsPath, documentPath, ROUTES } from '@/lib/routes';
 import { DocumentRoute } from './document';
 
@@ -30,9 +31,19 @@ type ServerOptions = Parameters<typeof documentServer>[2];
  */
 function at(path: string, documents: readonly DocumentFixture[] = MIXED_DOCUMENTS, options: ServerOptions = {}) {
   const server = documentServer([MINIO_BUCKET, S3_BUCKET], documents, options);
+  // The PDF has one link, so the share card has something to show and a re-key something to revoke.
+  const pdf = server.documents.find((document) => document.id === PDF_DOCUMENT.id);
+  const sharing = shareLinkServer(
+    server.documents,
+    pdf === undefined ? [] : [shareLinkFixture(pdf, { label: 'For Dana' })],
+  );
   return {
     server,
-    parameters: { apolloClient: { resolvers: server.resolvers }, router: { initialEntries: [path] } },
+    sharing,
+    parameters: {
+      apolloClient: { resolvers: mergeResolvers(server.resolvers, sharing.resolvers) },
+      router: { initialEntries: [path] },
+    },
   };
 }
 
@@ -82,6 +93,28 @@ export const Pdf: Story = {
       bucketDocumentsPath(MINIO_BUCKET.slug),
     );
     await expect(canvas.getByRole('link', { name: 'Documents' })).toHaveAttribute('href', ROUTES.documents);
+  },
+};
+
+const rekeying = at(documentPath(PDF_DOCUMENT.id));
+/**
+ * The page's share links: revoking them all moves the file, every link reads revoked, and the preview asks for a
+ * URL signed for the new key.
+ */
+export const RevokesAllLinks: Story = {
+  parameters: rekeying.parameters,
+  play: async ({ canvas, canvasElement }) => {
+    await expect(await canvas.findByRole('heading', { level: 2, name: 'Share links' })).toBeInTheDocument();
+    await expect(await canvas.findByText('For Dana')).toBeInTheDocument();
+    await canvas.findByTitle(`Preview of ${PDF_DOCUMENT.title}`);
+    const asked = rekeying.server.calls.contentUrl.length;
+    await userEvent.click(canvas.getByRole('button', { name: 'Revoke all links' }));
+    const confirm = within(await within(canvasElement.ownerDocument.body).findByRole('alertdialog'));
+    await userEvent.click(confirm.getByRole('button', { name: 'Revoke all links' }));
+    await expect(await canvas.findByText('Revoked')).toBeInTheDocument();
+    await waitFor(() => expect(rekeying.server.calls.contentUrl.length).toBeGreaterThan(asked));
+    const moved = rekeying.server.documents.find((document) => document.id === PDF_DOCUMENT.id);
+    await expect(await canvas.findByText(moved?.objectKey ?? '')).toBeInTheDocument();
   },
 };
 

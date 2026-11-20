@@ -238,6 +238,22 @@ export const Edit: Story = {
   },
 };
 
+/** A new access key on edit warns that every share link signed with the old one stops opening. */
+export const EditAccessKey: Story = {
+  args: { bucket: B2_BUCKET },
+  parameters: { apolloClient: { resolvers: bucketServer([B2_BUCKET]).resolvers } },
+  play: async ({ canvasElement }) => {
+    const dialog = await dialogOf(canvasElement, 'Edit “Backups”');
+    const key = dialog.getByRole('textbox', { name: /Access key ID/ });
+    await expect(dialog.queryByText('Existing share links will stop working')).not.toBeInTheDocument();
+    await userEvent.type(key, '2');
+    await expect(await dialog.findByText('Existing share links will stop working')).toBeInTheDocument();
+    await expect(dialog.getByText(/signed with the old access key/)).toBeInTheDocument();
+    await userEvent.type(key, '{Backspace}');
+    await waitFor(() => expect(dialog.queryByText('Existing share links will stop working')).not.toBeInTheDocument());
+  },
+};
+
 /** Editing a bucket whose secret can no longer be read: it says why, and the secret is required. */
 export const EditUnreadableSecret: Story = {
   args: { bucket: { ...MINIO_BUCKET, secretReadable: false } },

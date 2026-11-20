@@ -47,12 +47,29 @@ const errorLink = sessionOverLink(() => {
 });
 
 /**
+ * How the cache tells rows apart where `id` is not the key. A user's settings row is keyed by its `userId`, so a
+ * save in Settings → General updates every query that read it.
+ */
+export const TYPE_POLICIES = Object.freeze({
+  AppSettings: { keyFields: ['userId'] },
+});
+
+/**
+ * The cache every client is built with, the app's and each story's.
+ *
+ * @returns A new, empty cache.
+ */
+export function createCache(): InMemoryCache {
+  return new InMemoryCache({ typePolicies: { ...TYPE_POLICIES } });
+}
+
+/**
  * The one Apollo client the app runs on. It sends the session token with every
  * request and goes back to sign-in when the server says the session is over.
  */
 export const apolloClient = new ApolloClient({
   link: ApolloLink.from([errorLink, httpLink]),
-  cache: new InMemoryCache(),
+  cache: createCache(),
   defaultOptions: {
     watchQuery: { fetchPolicy: 'cache-and-network' },
   },

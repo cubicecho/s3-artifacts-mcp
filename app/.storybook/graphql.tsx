@@ -1,4 +1,4 @@
-import { ApolloClient, ApolloLink, InMemoryCache, Observable } from '@apollo/client';
+import { ApolloClient, ApolloLink, Observable } from '@apollo/client';
 import { ApolloProvider } from '@apollo/client/react';
 import type { MockLink } from '@apollo/client/testing';
 import { MockedProvider } from '@apollo/client/testing/react';
@@ -6,7 +6,7 @@ import { buildSchema, print } from 'graphql';
 import { GraphQLHandler, type types as graphqlMocks } from 'graphql-mocks';
 import { type ReactElement, type ReactNode, useMemo } from 'react';
 import schemaSource from '@/__generated__/schema.graphql?raw';
-import { sessionOverLink } from '@/lib/apollo';
+import { createCache, sessionOverLink } from '@/lib/apollo';
 
 // `graphql-mocks` publishes its types only through the namespace on the package root; there is
 // no `graphql-mocks/types` entry in its exports map.
@@ -114,7 +114,7 @@ function MockServer({ parameters, children }: { parameters: ApolloParameters; ch
           sessionOverLink(parameters.onSessionOver ?? (() => undefined)),
           handlerLink(parameters.resolvers ?? {}, parameters.delay ?? 0),
         ]),
-        cache: new InMemoryCache(),
+        cache: createCache(),
       }),
     [parameters.resolvers, parameters.delay, parameters.onSessionOver],
   );
