@@ -26,6 +26,8 @@ export interface MemoryStorage extends Storage {
   failures: Partial<Record<MemoryOperation, string>>;
   /** When set, `presignGet` signs for this origin instead, which the backend's `fetch` does not answer. */
   publicOrigin: string | null;
+  /** How many objects `listObjects` puts in a page, as `MaxKeys` would. */
+  pageSize: number;
 }
 
 /** A pretend S3 service. */
@@ -43,6 +45,8 @@ export interface MemoryBackend {
 /** The origin presigned URLs from a memory backend point at. */
 export const MEMORY_ORIGIN = 'http://memory.test';
 const NOT_FOUND = 404;
+/** A ListObjectsV2 page's size on S3. */
+const DEFAULT_PAGE_SIZE = 1000;
 
 /**
  * An error named for a service's code, as the SDK throws.
@@ -80,6 +84,7 @@ function createMemoryStorage(name: string): MemoryStorage {
     inFlight,
     failures,
     publicOrigin: null,
+    pageSize: DEFAULT_PAGE_SIZE,
 
     async headBucket() {
       failIfAsked('headBucket');
@@ -117,6 +122,16 @@ function createMemoryStorage(name: string): MemoryStorage {
       } finally {
         inFlight.delete(key);
         signal?.removeEventListener('abort', onAbort);
+      }
+    },
+    async *listObjects() {
+      failIfAsked('listObjects');
+      const keys = [...objects.keys()].sort();
+      for (let start = 0; start < keys.length; start += storage.pageSize) {
+        yield keys.slice(start, start + storage.pageSize).map((key) => ({
+          key,
+          size: objects.get(key)?.body.length ?? 0,
+        }));
       }
     },
     async copy(fromKey, toKey) {

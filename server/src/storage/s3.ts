@@ -6,6 +6,7 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   NotFound,
   PutObjectCommand,
   S3Client,
@@ -147,6 +148,17 @@ export function createS3Storage(bucket: BucketConnection, secretAccessKey: strin
       } finally {
         signal?.removeEventListener('abort', onAbort);
       }
+    },
+
+    async *listObjects() {
+      let ContinuationToken: string | undefined;
+      do {
+        const page = await client.send(new ListObjectsV2Command({ Bucket, ContinuationToken }));
+        yield (page.Contents ?? []).flatMap((object) =>
+          object.Key === undefined ? [] : [{ key: object.Key, size: object.Size ?? 0 }],
+        );
+        ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+      } while (ContinuationToken !== undefined);
     },
 
     async copy(fromKey, toKey) {

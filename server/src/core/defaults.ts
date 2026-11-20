@@ -168,6 +168,23 @@ export const DOCUMENT_DEFAULTS: Readonly<DocumentSettings> = Object.freeze({
   contentTypeMaxLength: 255,
 });
 
+/** Scanning a bucket for files already in it (`scanBucket`). */
+export interface ScanSettings {
+  /**
+   * The most files one scan adds. A scan that reaches it stops and says so; scanning again carries on, since what
+   * was added is skipped the second time.
+   */
+  maxImports: number;
+  /** How many of the files a scan could not add it names, with why. The rest are only counted. */
+  skippedReported: number;
+}
+
+/** The shipped values of `ScanSettings`. */
+export const SCAN_DEFAULTS: Readonly<ScanSettings> = Object.freeze({
+  maxImports: 5000,
+  skippedReported: 20,
+});
+
 /** Reading a document's bytes through the server (`GET /api/documents/:id/content`). */
 export interface ContentSettings {
   /** How long a signed content URL (`Document.contentUrl`) works, for elements that cannot send a session. */

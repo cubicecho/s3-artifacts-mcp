@@ -4,14 +4,17 @@ import { Readable } from 'node:stream';
 import { buffer, text } from 'node:stream/consumers';
 import { ListMultipartUploadsCommand, S3Client } from '@aws-sdk/client-s3';
 import { DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fixedAuthHost } from '../../auth/auth-host.ts';
 import { createRateLimiter } from '../../auth/rate-limit.ts';
 import { runBucketTest } from '../../buckets/test.ts';
+import type { Context } from '../../core/context.ts';
 import { UPLOAD_DEFAULTS } from '../../core/defaults.ts';
 import { SecretPurpose } from '../../core/secrets.ts';
 import { HttpStatus } from '../../core/wire.ts';
 import { objectKeyFor } from '../../documents/keys.ts';
+import { scanBucket } from '../../documents/scan.ts';
 import { createApp } from '../../http/app.ts';
 import { createStorageRegistry } from '../../storage/registry.ts';
 import { createS3Storage } from '../../storage/s3.ts';
@@ -83,6 +86,27 @@ describe.skipIf(isConfigured === false)('S3 storage against a real service', () 
     await storage.delete([key, copy]);
     expect(await storage.head(key)).toBeNull();
     expect(await storage.head(copy)).toBeNull();
+  });
+
+  it('lists objects, nested keys included, with their sizes', async () => {
+    const prefix = `.s3am-it-list-${Date.now()}`;
+    const keys = [`${prefix}/a.txt`, `${prefix}/deeper/b.txt`, `${prefix}-c.txt`];
+    for (const key of keys) {
+      await storage.upload(key, key, { contentType: 'text/plain', size: Buffer.byteLength(key) });
+    }
+    try {
+      const found = new Map<string, number>();
+      for await (const page of storage.listObjects()) {
+        for (const object of page) {
+          found.set(object.key, object.size);
+        }
+      }
+      for (const key of keys) {
+        expect(found.get(key)).toBe(Buffer.byteLength(key));
+      }
+    } finally {
+      await storage.delete(keys);
+    }
   });
 });
 
@@ -173,6 +197,7 @@ describe.skipIf(isConfigured === false)(
       let token: string;
       let bucketId: string;
       let owner: string;
+      let scanContext: Context;
 
       beforeAll(async () => {
         db = await createTestDb();
@@ -181,6 +206,7 @@ describe.skipIf(isConfigured === false)(
         owner = await createUser(db, 'owner@example.com');
         token = await createSessionToken(auth, owner);
         const registry = createStorageRegistry({ db, secrets });
+        scanContext = { db, userId: owner, secrets, storage: registry } as unknown as Context;
         bucketId = await insertBucket(db, secrets, owner, {
           endpoint: connection.endpoint,
           region: connection.region,
@@ -238,6 +264,31 @@ describe.skipIf(isConfigured === false)(
           expect(Buffer.from(await range.arrayBuffer()).equals(bytes.subarray(1000, 2000))).toBe(true);
         } finally {
           await storage.delete([objectKey]);
+        }
+      });
+
+      it('adds a file another tool put in the bucket, then serves it where it already was', async () => {
+        const key = `.s3am-it-scan-${Date.now()}/Field notes.md`;
+        const body = '# Found by a scan';
+        await storage.upload(key, body, { contentType: 'text/markdown', size: Buffer.byteLength(body) });
+        try {
+          // The dev bucket may hold other objects; this database is the test's own, so they come and go with it.
+          const result = await scanBucket(scanContext, bucketId);
+          expect(result.imported).toBeGreaterThanOrEqual(1);
+          const [row] = await db
+            .select()
+            .from(documents)
+            .where(and(eq(documents.bucketId, bucketId), eq(documents.objectKey, key)));
+          expect(row).toMatchObject({ filename: 'Field notes.md', contentType: 'text/markdown', sha256: null });
+
+          const read = await fetch(`${origin}/api/documents/${row.id}/content`, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+          expect(read.status).toBe(HttpStatus.Ok);
+          expect(await read.text()).toBe(body);
+          expect((await scanBucket(scanContext, bucketId)).imported).toBe(0);
+        } finally {
+          await storage.delete([key]);
         }
       });
     });

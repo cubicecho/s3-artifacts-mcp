@@ -13,6 +13,12 @@ export interface ObjectHead {
   contentType: string | null;
 }
 
+/** One object a listing found. */
+export interface ListedObject {
+  key: string;
+  size: number;
+}
+
 /** How a browser should treat the object a presigned GET opens. */
 export const Disposition = {
   Inline: 'inline',
@@ -93,6 +99,11 @@ export interface Storage {
    * was never written.
    */
   uploadStream(key: string, body: Readable, options: StreamUploadOptions): Promise<void>;
+  /**
+   * Every object in the bucket, a page at a time, in key order. Multipart uploads still in flight are not
+   * objects yet, so they are not listed.
+   */
+  listObjects(): AsyncIterable<ListedObject[]>;
   /** Copies an object to another key in the same bucket. */
   copy(fromKey: string, toKey: string): Promise<void>;
   /** Deletes the objects at the keys. A key with nothing at it is not an error. */

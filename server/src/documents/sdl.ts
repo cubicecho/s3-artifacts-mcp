@@ -17,6 +17,26 @@ export const DOCUMENTS_SDL = parse(`
     uploadPath: String!
   }
 
+  "A file a bucket scan found and could not add, and why."
+  type SkippedObject {
+    key: String!
+    reason: String!
+  }
+
+  "What a bucket scan did."
+  type BucketScan {
+    "Files added as documents."
+    imported: Int!
+    "Files a document already pointed at, the app's own uploads among them."
+    alreadyListed: Int!
+    "How many files could not be added: a key with control characters, or a name too long to download as."
+    skippedCount: Int!
+    "The first of those, with why."
+    skipped: [SkippedObject!]!
+    "True when the scan stopped at its limit with files left. Scanning again carries on from there."
+    truncated: Boolean!
+  }
+
   extend type Document {
     """
     A URL that reads the document's bytes without a session, for \`<img>\`, \`<iframe>\`, \`<video>\` and
@@ -44,5 +64,15 @@ export const DOCUMENTS_SDL = parse(`
     the delete; the document is kept in both cases.
     """
     deleteDocument(id: UUID!): Boolean!
+    """
+    Adds the files already in one of the caller's buckets as documents, \`ready\` at once. Each keeps its key; its
+    filename is the key's last segment, its title the key without the extension, and its type is guessed from the
+    extension. There is no checksum, since the server never reads the bytes. Folder markers (keys ending in \`/\`)
+    are passed over, and files that are documents already are counted, not added again, so a scan can be run
+    any number of times. NOT_FOUND for a bucket that is missing or someone else's; BAD_USER_INPUT when its secret
+    can no longer be decrypted; STORAGE_ERROR when the bucket refuses to be listed (the access key needs list
+    permission), with what was added before that kept.
+    """
+    scanBucket(id: UUID!): BucketScan!
   }
 `);

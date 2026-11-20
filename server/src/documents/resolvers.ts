@@ -12,9 +12,10 @@ import { SECRET_UNREADABLE_MESSAGE } from './bucket-storage.ts';
 import { contentPath, signedContentUrl } from './content-url.ts';
 import { createPendingDocument, type DocumentUploadInput, titleSchema } from './create.ts';
 import { DOCUMENT_NOT_FOUND, findOwnedDocument } from './rows.ts';
+import { scanBucket } from './scan.ts';
 import { DOCUMENTS_SDL } from './sdl.ts';
 
-// The owner's documents: starting an upload, renaming and deleting. Reads are the generated
+// The owner's documents: starting an upload, scanning a bucket for files already in it, renaming and deleting. Reads are the generated
 // `documents` / `document` fields, scoped by owner in tenancy.ts. The bytes travel through the
 // content routes (upload.ts, download.ts), never through GraphQL.
 
@@ -82,7 +83,7 @@ async function documentStorage(ctx: Context, document: Document): Promise<Storag
 }
 
 /**
- * Adds the document mutations, `DocumentUpload` and `Document.contentUrl` to the schema.
+ * Adds the document mutations, `DocumentUpload`, `BucketScan` and `Document.contentUrl` to the schema.
  *
  * @param schema - The schema so far, which must already have a Mutation type and the generated `Document`.
  * @returns The extended schema.
@@ -152,6 +153,9 @@ export function applyDocumentsExtension(schema: GraphQLSchema): GraphQLSchema {
     await context.db.delete(documents).where(and(eq(documents.id, row.id), eq(documents.userId, row.userId)));
     return true;
   };
+
+  mutations.scanBucket.resolve = (_parent: unknown, args: { id: string }, context: Context) =>
+    scanBucket(context, args.id);
 
   return extended;
 }

@@ -29,11 +29,14 @@ const COLUMN_DOCS: Readonly<Record<string, Readonly<Record<string, string>>>> = 
   documents: Object.freeze({
     bucketId: 'The bucket the document’s bytes are in.',
     title: 'What the UI calls the document. It starts as the filename without its extension.',
-    filename: 'The name the file was uploaded as, which a download saves it as.',
-    objectKey: 'Where the bytes are in the bucket: `<objectId>-<safe filename>`, at its top level.',
+    filename:
+      'The name the file was uploaded as, or the last segment of a scanned file’s key: what a download saves it as.',
+    objectKey:
+      'Where the bytes are in the bucket: `<objectId>-<safe filename>` at its top level for an upload, or wherever a scanned file already was.',
     contentType: 'The MIME type the document is served as.',
     size: 'The file’s length in bytes.',
-    sha256: 'The SHA-256 of the bytes, in hex. Null until the upload has finished.',
+    sha256:
+      'The SHA-256 of the bytes, in hex. Null until the upload has finished, and for a scanned file, whose bytes were never read.',
     status: '`pending_upload` while its bytes are on their way, `ready` once they are in the bucket.',
   }),
 });

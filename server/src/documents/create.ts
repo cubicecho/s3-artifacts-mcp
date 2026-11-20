@@ -32,7 +32,8 @@ export const titleSchema = z
   .min(1, 'Title cannot be empty.')
   .max(titleMaxLength, `A title can be at most ${titleMaxLength} characters.`);
 
-const filenameSchema = z
+/** A filename, for an upload or a file a scan found. */
+export const filenameSchema = z
   .string()
   .trim()
   .min(1, 'Filename cannot be empty.')
@@ -92,19 +93,20 @@ export function titleFromFilename(filename: string): string {
 }
 
 /**
- * Loads a bucket of the caller's that can take an upload now.
+ * Loads a bucket of the caller's whose secret still opens, so it can be reached now: for an upload or a scan.
  *
  * @param ctx - The request.
  * @param bucketId - The bucket as sent.
+ * @param doing - What cannot happen without the secret, for the message: "uploaded to", "scanned".
  * @returns The bucket.
  * @throws NOT_FOUND when it is missing or someone else's; BAD_USER_INPUT when its secret no longer decrypts.
  */
-async function uploadableBucket(ctx: Context, bucketId: string): Promise<Bucket> {
+export async function reachableBucket(ctx: Context, bucketId: string, doing: string): Promise<Bucket> {
   const bucket = await ownBucket(ctx, bucketId);
   const isSecretReadable = ctx.secrets.canOpen(bucket.secretAccessKeyEnc, SecretPurpose.BucketSecret);
   if (isSecretReadable === false) {
     throw badInput(
-      `The stored secret for ${bucket.name} can no longer be decrypted, so nothing can be uploaded to it. ` +
+      `The stored secret for ${bucket.name} can no longer be decrypted, so it cannot be ${doing}. ` +
         'Enter it again in Settings → Buckets.',
     );
   }
@@ -124,7 +126,7 @@ export async function createPendingDocument(ctx: Context, input: DocumentUploadI
   const userId = requireAuth(ctx);
   // Step 4 reads the cap from `app_settings.max_upload_bytes`, bounded by this one.
   const { filename, contentType, size } = parseOrThrow(uploadSchema(UPLOAD_DEFAULTS.maxUploadBytes), input);
-  const bucket = await uploadableBucket(ctx, input.bucketId);
+  const bucket = await reachableBucket(ctx, input.bucketId, 'uploaded to');
   const id = randomUUID();
   const [row] = await ctx.db
     .insert(documents)
