@@ -5,6 +5,7 @@ import { assertObjectType, extendSchema, type GraphQLResolveInfo, type GraphQLSc
 import { z } from 'zod';
 import type { Context } from '../core/context.ts';
 import { badInput, conflict, ErrorCode, notFound, requireAuth, withCode } from '../core/errors.ts';
+import { FOREIGN_KEY_VIOLATION, isUniqueViolation, postgresErrorOf } from '../core/postgres-errors.ts';
 import { SecretPurpose, SecretUnreadableError } from '../core/secrets.ts';
 import { parseOrThrow } from '../core/validation.ts';
 import { typeNames } from '../graphql/naming.ts';
@@ -135,40 +136,8 @@ async function requireFreeSlug(ctx: Context, slug: string, exceptId: string | nu
   }
 }
 
-/** Postgres's code for a unique violation. */
-const UNIQUE_VIOLATION = '23505';
-/** Postgres's code for a foreign key refusing a write, as `documents.bucket_id`'s RESTRICT does. */
-const FOREIGN_KEY_VIOLATION = '23503';
 /** The index that keeps slugs unique, from `db/src/models/buckets.ts`. */
 const SLUG_INDEX = 'uq_buckets_slug';
-
-/**
- * The Postgres error in an error's `cause` chain, if any. Drizzle wraps the driver's error, so its
- * fields are on a cause, not the error itself.
- *
- * @param error - What a write threw.
- * @returns The SQLSTATE and constraint name, or null when no Postgres error is in the chain.
- */
-function postgresErrorOf(error: unknown): { code: string; constraint: unknown } | null {
-  for (let current: unknown = error; current instanceof Object; current = (current as { cause?: unknown }).cause) {
-    const { code, constraint } = current as { code?: unknown; constraint?: unknown };
-    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) {
-      return { code, constraint };
-    }
-  }
-  return null;
-}
-
-/**
- * Whether a write was refused by the slug index.
- *
- * @param error - What a write threw.
- * @returns True when another bucket took the slug between the check and the write.
- */
-function isSlugRace(error: unknown): boolean {
-  const found = postgresErrorOf(error);
-  return found?.code === UNIQUE_VIOLATION && found.constraint === SLUG_INDEX;
-}
 
 /**
  * Runs a write that saves a slug, turning a lost race for it into the same CONFLICT the check gives.
@@ -182,7 +151,7 @@ async function withSlugGuard<T>(slug: string, write: () => Promise<T>): Promise<
   try {
     return await write();
   } catch (error) {
-    if (isSlugRace(error)) {
+    if (isUniqueViolation(error, SLUG_INDEX)) {
       throw conflict(`Another bucket already has the slug "${slug}". Choose another.`);
     }
     throw error;
