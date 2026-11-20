@@ -161,7 +161,7 @@ async function run(body: () => Promise<ToolAnswer>): Promise<CallToolResult> {
 function instructionsFor(bucket: Bucket): string {
   const reach = `Files in the owner's bucket "${bucket.name}". Only this bucket is reachable here.`;
   if (bucket.mcpWritable === false) {
-    return `${reach} It is shared read-only: list_documents and get_document read it.`;
+    return `${reach} It is shared read-only: list_documents, get_document and list_tags read it.`;
   }
   return (
     `${reach} To hand the user a file you made, store it here and give them a share link. ` +
