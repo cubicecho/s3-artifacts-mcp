@@ -19,7 +19,7 @@ import { LIBRARY_QUERIES, Library, type LibraryBucket, type LibraryDocument, sor
 import { FULL_WIDTH_BODY } from '@/lib/page';
 import { queryLike } from '@/lib/query';
 import { BUCKET_FILTER_PARAM, documentPath } from '@/lib/routes';
-import { settingsLink } from '@/routes/settings';
+import { settingsLink } from '@/lib/settings-tabs';
 
 /** The filter's "every bucket" choice. Not a slug: a slug is lower-case letters, digits and dashes. */
 const ALL_BUCKETS = '*';

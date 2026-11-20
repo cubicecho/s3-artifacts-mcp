@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ThemePicker } from '@/components/ui/theme-picker';
 import { FULL_WIDTH_BODY } from '@/lib/page';
 import { queryLike } from '@/lib/query';
-import { ROUTES } from '@/lib/routes';
+import { SETTINGS_TAB_PARAM, SETTINGS_TABS, settingsTabOf, tabSearch } from '@/lib/settings-tabs';
 import { useSignOut } from '@/lib/sign-out';
 import { cn } from '@/lib/utils';
 
@@ -29,51 +29,6 @@ const SettingsPage = graphql(`
     }
   }
 `);
-
-/** The query-string key that holds the open tab, so a tab can be linked and survives a reload. */
-export const SETTINGS_TAB_PARAM = 'tab';
-
-/** The tabs, in order. The first is where an absent or unknown `?tab=` lands. */
-export const SETTINGS_TABS = [
-  { value: 'buckets', label: 'Buckets' },
-  { value: 'share-links', label: 'Share links' },
-  { value: 'general', label: 'General' },
-  { value: 'auth', label: 'Auth' },
-  { value: 'api-keys', label: 'API keys' },
-  { value: 'appearance', label: 'Appearance' },
-] as const;
-
-export type SettingsTab = (typeof SETTINGS_TABS)[number]['value'];
-
-/**
- * The tab `?tab=` names, or the first when it names none.
- *
- * @param requested - The query string's `tab`, if any.
- * @returns The tab to open.
- */
-export function settingsTabOf(requested: string | null): SettingsTab {
-  return SETTINGS_TABS.find((entry) => entry.value === requested)?.value ?? SETTINGS_TABS[0].value;
-}
-
-/**
- * The link a tab is: this page, with only the tab in its query string.
- *
- * @param tab - The tab to link to.
- * @returns The search part of the link, empty for the first tab.
- */
-function tabSearch(tab: SettingsTab): string {
-  return tab === SETTINGS_TABS[0].value ? '' : `?${new URLSearchParams({ [SETTINGS_TAB_PARAM]: tab })}`;
-}
-
-/**
- * A link to one tab of this page, for a page elsewhere that sends the reader here.
- *
- * @param tab - The tab to open.
- * @returns The path and query string.
- */
-export function settingsLink(tab: SettingsTab): string {
-  return `${ROUTES.settings}${tabSearch(tab)}`;
-}
 
 /**
  * The owner's settings, a tab each: the buckets documents are stored in, every share link, the

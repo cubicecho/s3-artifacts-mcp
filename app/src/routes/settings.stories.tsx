@@ -6,8 +6,9 @@ import { mergeResolvers, shareLinkFixture, sharingServer } from '@/components/do
 import { AppLayout } from '@/components/layouts/app-layout';
 import { clientId } from '@/lib/id';
 import { ROUTES } from '@/lib/routes';
+import { settingsLink } from '@/lib/settings-tabs';
 import { BYTES_PER_MEBIBYTE } from '@/lib/upload-limit';
-import { SettingsRoute, settingsLink } from './settings';
+import { SettingsRoute } from './settings';
 
 /**
  * The settings screen against a mock server built from the real SDL.

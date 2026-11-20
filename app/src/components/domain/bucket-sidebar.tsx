@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Library, sortBuckets } from '@/lib/library';
 import { queryLike } from '@/lib/query';
 import { ROUTES } from '@/lib/routes';
-import { settingsLink } from '@/routes/settings';
+import { settingsLink } from '@/lib/settings-tabs';
 
 /**
  * The bucket tree as a section of the app's sidebar, under the places: on every signed-in page,

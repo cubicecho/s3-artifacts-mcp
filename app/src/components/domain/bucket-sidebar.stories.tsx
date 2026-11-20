@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
 import { Sidebar } from '@/components/sidebar';
 import { documentPath } from '@/lib/routes';
-import { settingsLink } from '@/routes/settings';
+import { settingsLink } from '@/lib/settings-tabs';
 import { MINIO_BUCKET, S3_BUCKET } from './bucket-fixtures';
 import { BucketSidebarSection } from './bucket-sidebar';
 import { documentServer, MARKDOWN_DOCUMENT, MIXED_DOCUMENTS, PDF_DOCUMENT } from './document-fixtures';
