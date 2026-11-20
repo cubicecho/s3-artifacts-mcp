@@ -32,7 +32,13 @@ COPY db/package.json db/
 COPY server/package.json server/
 COPY app/package.json app/
 
-RUN npm ci --omit=dev --include-workspace-root --workspace @cubicecho/s3-artifacts-mcp-db --workspace @cubicecho/s3-artifacts-mcp-server \
+# --omit=optional as well as dev: better-auth and drizzle-orm name vitest,
+# drizzle-kit, PGlite and React as optional peers, which makes npm count those
+# dev tools as "devOptional" and keep them unless both are omitted (about 200 MB
+# of the image). Nothing the server loads is an optional dependency; the only
+# optional packages in the lockfile are esbuild's, rolldown's and lightningcss's
+# per-platform binaries, which are build tools.
+RUN npm ci --omit=dev --omit=optional --include-workspace-root --workspace @cubicecho/s3-artifacts-mcp-db --workspace @cubicecho/s3-artifacts-mcp-server \
  && npm cache clean --force
 
 # The server is not compiled: Node strips the types from its TypeScript sources
