@@ -230,6 +230,37 @@ export const SCAN_DEFAULTS: Readonly<ScanSettings> = Object.freeze({
   skippedReported: 20,
 });
 
+/** The owner's tags, and tagging documents in bulk. */
+export interface TagSettings {
+  /** The longest tag name, in characters, after trimming. */
+  nameMaxLength: number;
+  /** The most documents one `bulkTagDocuments` changes. */
+  bulkMaxDocuments: number;
+  /** The most tags one call names: a document's whole set, a bulk add or remove, or an MCP tool's `tags`. */
+  maxTagsPerCall: number;
+  /** The colours, as `#rrggbb`, a tag made without one is given: picked by its name, so a name keeps its colour. */
+  palette: readonly string[];
+}
+
+/** The shipped values of `TagSettings`. */
+export const TAG_DEFAULTS: Readonly<TagSettings> = Object.freeze({
+  nameMaxLength: 50,
+  bulkMaxDocuments: 1000,
+  maxTagsPerCall: 50,
+  palette: Object.freeze([
+    '#ef4444',
+    '#f97316',
+    '#eab308',
+    '#22c55e',
+    '#14b8a6',
+    '#0ea5e9',
+    '#6366f1',
+    '#a855f7',
+    '#ec4899',
+    '#64748b',
+  ]),
+});
+
 /** Reading a document's bytes through the server (`GET /api/documents/:id/content`). */
 export interface ContentSettings {
   /** How long a signed content URL (`Document.contentUrl`) works, for elements that cannot send a session. */

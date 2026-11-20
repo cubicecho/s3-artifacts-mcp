@@ -9,6 +9,7 @@ import { applyBucketsExtension } from '../buckets/resolvers.ts';
 import { applyDocumentsExtension } from '../documents/resolvers.ts';
 import { applyShareLinksExtension } from '../share-links/resolvers.ts';
 import { applySsoExtension } from '../sso/resolvers.ts';
+import { applyTagsExtension } from '../tags/resolvers.ts';
 import { describeColumn, describeTable } from './docs.ts';
 import { typeNames } from './naming.ts';
 import { contextValues, features, scope } from './tenancy.ts';
@@ -78,6 +79,7 @@ export function createSchema(db: DB): GeneratedData<DB, 'loose'> {
   schema = applyBucketsExtension(schema);
   schema = applyDocumentsExtension(schema);
   schema = applyShareLinksExtension(schema);
+  schema = applyTagsExtension(schema);
   schema = applyAppSettingsExtension(schema);
 
   return { schema, entities };

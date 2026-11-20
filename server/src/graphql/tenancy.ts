@@ -14,11 +14,10 @@ import { requireAuth } from '../core/errors.ts';
 type AnyTable = any;
 
 /**
- * The tables whose rows carry the owner's id and are scoped by it. The tags add theirs here with
- * their model. `appSettings` is one row per account, keyed by its `user_id`, so it is scoped like
+ * The tables whose rows carry the owner's id and are scoped by it. `appSettings` is one row per account, keyed by its `user_id`, so it is scoped like
  * any other: there is no instance-wide row to read without asking whose it is.
  */
-export const USER_OWNED_TABLES = ['appSettings', 'buckets', 'documents', 'shareLinks'] as const;
+export const USER_OWNED_TABLES = ['appSettings', 'buckets', 'documents', 'documentTags', 'shareLinks', 'tags'] as const;
 
 /** Every table with a scope entry: the ones drizzle-graphql generates fields for. */
 export const ALL_TABLES = ['users', ...USER_OWNED_TABLES] as const;
@@ -34,6 +33,9 @@ export const scope: NonNullable<BuildSchemaConfig['scope']> = {
   buckets: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
   documents: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
   shareLinks: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
+  tags: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
+  // A link carries its owner's id, so `Document.tags` and a tag filter pass only through the caller's own links.
+  documentTags: (context, table) => eq((table as AnyTable).userId, requireAuth(context)),
 };
 
 /**
@@ -45,6 +47,8 @@ export const contextValues: NonNullable<BuildSchemaConfig['contextValues']> = {
   buckets: { userId: (context) => requireAuth(context) },
   documents: { userId: (context) => requireAuth(context) },
   shareLinks: { userId: (context) => requireAuth(context) },
+  tags: { userId: (context) => requireAuth(context) },
+  documentTags: { userId: (context) => requireAuth(context) },
 };
 
 /**
