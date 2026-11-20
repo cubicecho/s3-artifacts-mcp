@@ -1,3 +1,17 @@
+# [1.4.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.3.0...v1.4.0) (2026-11-20)
+
+### Bug Fixes
+
+* **mcp:** list_tags names no tag used only in another bucket ([cb338b6](https://github.com/cubicecho/s3-artifacts-mcp/commit/cb338b60cc43495a8167668eb0f3f100f8664c59))
+* **mcp:** name list_tags in a read-only bucket's instructions ([de786e3](https://github.com/cubicecho/s3-artifacts-mcp/commit/de786e3e46bb0ec5167946b95300a6531d88945b))
+
+### Features
+
+* **app:** tags in the documents list, its filters, and tagging in bulk ([e4baf3c](https://github.com/cubicecho/s3-artifacts-mcp/commit/e4baf3cf726ab531d4d1f62ad586ad64b4f7f1c0))
+* **app:** the Tags page, and a tag picker on the document page ([838044b](https://github.com/cubicecho/s3-artifacts-mcp/commit/838044b5c083c828ffe59419b16b96730e2b0b1c))
+* **mcp:** list_tags, tag_document, and tags on the upload tools ([a264e7b](https://github.com/cubicecho/s3-artifacts-mcp/commit/a264e7b70c0df8486cec893908cb51f0f21458fd))
+* **server:** the owner's tags, and tagging documents ([c9e190f](https://github.com/cubicecho/s3-artifacts-mcp/commit/c9e190f71a7c7ecdfef6d4f2a44f2fb4747cf9e7))
+
 # [1.3.0](https://github.com/cubicecho/s3-artifacts-mcp/compare/v1.2.0...v1.3.0) (2026-11-20)
 
 ### Features
