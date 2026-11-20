@@ -26,6 +26,7 @@
     "check:types": "tsc --noEmit -p db/tsconfig.json && tsc --noEmit -p server/tsconfig.json && tsc --noEmit -p app/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --project node .integration.test.ts",
     "codegen": "npm run codegen:server && npm run codegen:app",
     "codegen:app": "npm run codegen -w @cubicecho/s3-artifacts-mcp-app",
     "codegen:server": "npm run codegen -w @cubicecho/s3-artifacts-mcp-server",
