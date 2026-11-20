@@ -7,6 +7,7 @@ import { ConfirmButton } from '@/components/confirm-button';
 import { DocumentDetailsCard } from '@/components/domain/document-details-card';
 import { DocumentPreviewCard } from '@/components/domain/document-preview-card';
 import { DocumentShareLinks } from '@/components/domain/document-share-links';
+import { DocumentTagsCard } from '@/components/domain/document-tags-card';
 import { RenameDocumentDialog } from '@/components/domain/rename-document-dialog';
 import { LoadState } from '@/components/load-state';
 import { PageLayout } from '@/components/page-layout';
@@ -38,6 +39,9 @@ const DocumentDetail = graphql(`
         id
         slug
         name
+      }
+      tags {
+        ...TagFields
       }
     }
   }
@@ -72,7 +76,7 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
- * One document: its preview, its share links, its details, and Rename, Download and Delete in the header. A
+ * One document: its preview, its tags, its share links, its details, and Rename, Download and Delete in the header. A
  * document that is not there, or not the owner's, is a not-found page rather than an error.
  *
  * @returns The document page.
@@ -177,6 +181,7 @@ export function DocumentRoute() {
                 description="Its bytes have not all reached the bucket. Upload the file again if it does not finish."
               />
             )}
+            <DocumentTagsCard document={document} />
             <DocumentShareLinks document={document} />
             <DocumentDetailsCard document={document} />
           </div>

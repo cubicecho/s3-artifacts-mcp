@@ -4,7 +4,7 @@ import { BucketSidebarSection } from '@/components/domain/bucket-sidebar';
 import { AppBarItem, Sidebar, SidebarItem, SidebarSection } from '@/components/sidebar';
 import { SidebarLayout } from '@/components/split-layout';
 import { Button } from '@/components/ui/button';
-import { FileText, type IconProps, Settings } from '@/components/ui/icons';
+import { FileText, type IconProps, Settings, Tag } from '@/components/ui/icons';
 import { APP_NAME } from '@/consts';
 import { ROUTES } from '@/lib/routes';
 import { useSignOut } from '@/lib/sign-out';
@@ -22,6 +22,7 @@ type NavItem = {
 const NAV_ITEMS: readonly NavItem[] = [
   // `end` so "Documents" is not also marked active on a page below it.
   { to: ROUTES.documents, label: 'Documents', icon: FileText, end: true, placement: 'main' },
+  { to: ROUTES.tags, label: 'Tags', icon: Tag, end: false, placement: 'main' },
   { to: ROUTES.settings, label: 'Settings', icon: Settings, end: false, placement: 'footer' },
 ];
 

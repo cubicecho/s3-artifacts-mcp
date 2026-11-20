@@ -1,6 +1,7 @@
 import { GraphQLError } from 'graphql';
 import type { DocumentStatus } from '@/__generated__/graphql';
 import { BUCKET_PRESETS, type BucketFixture, MINIO_BUCKET, S3_BUCKET } from '@/components/domain/bucket-fixtures';
+import type { TagFixture } from '@/components/domain/tag-fixtures';
 import { clientId } from '@/lib/id';
 import type { SendUpload } from '@/lib/upload';
 import { describeUploadLimit } from '@/lib/upload-limit';
@@ -26,6 +27,8 @@ export interface DocumentFixture {
   updatedAt: string;
   /** What `contentUrl` answers. */
   content: string;
+  /** Its tags: the tag server's own objects, so a rename shows on every document that has the tag. */
+  tags: TagFixture[];
 }
 
 /** The owner every fixture belongs to. */
@@ -74,6 +77,7 @@ export function documentFixture(
     createdAt,
     updatedAt: createdAt,
     content: textUrl('text/plain', 'Hello.'),
+    tags: [],
     ...fields,
   };
 }
@@ -375,6 +379,7 @@ export function documentServer(
           createdAt: now,
           updatedAt: now,
           content: textUrl('text/plain', 'Uploaded in a story.'),
+          tags: [],
         };
         documents.push(document);
         return { document, uploadPath: `/api/documents/${id}/content` };

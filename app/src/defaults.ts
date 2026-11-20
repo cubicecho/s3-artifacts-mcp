@@ -46,3 +46,14 @@ export interface PreviewSettings {
 export const PREVIEW_DEFAULTS: Readonly<PreviewSettings> = Object.freeze({
   maxTextBytes: 1_048_576,
 });
+
+/** What a new tag starts as in the tag form. */
+export interface TagSettings {
+  /** The colour a new tag's form opens on, as `#rrggbb`. A tag made from the picker gets one picked by the server. */
+  newTagColor: string;
+}
+
+/** What the tag form opens on. */
+export const TAG_DEFAULTS: Readonly<TagSettings> = Object.freeze({
+  newTagColor: '#3b82f6',
+});

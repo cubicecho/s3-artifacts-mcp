@@ -12,6 +12,7 @@ import { DocumentsRoute } from '@/routes/documents';
 import { LoginPage } from '@/routes/login';
 import { SettingsRoute } from '@/routes/settings';
 import { SsoPage } from '@/routes/sso';
+import { TagsRoute } from '@/routes/tags';
 import { VerifyPage } from '@/routes/verify';
 import './index.css';
 
@@ -45,6 +46,7 @@ createRoot(root).render(
             <Route element={<RequireAuth contentSlot={<Outlet />} />}>
               <Route path={ROUTES.documents} element={<DocumentsRoute />} />
               <Route path={ROUTES.document} element={<DocumentRoute />} />
+              <Route path={ROUTES.tags} element={<TagsRoute />} />
               <Route path={ROUTES.settings} element={<SettingsRoute />} />
             </Route>
             <Route path="*" element={<Navigate to={ROUTES.documents} replace />} />
