@@ -127,7 +127,7 @@ s3-artifacts-mcp/
 │   ├── tags/              # names, resolvers
 │   ├── share-links/       # sign, resolvers
 │   ├── settings/          # app settings row, resolvers
-│   ├── mcp/               # access, tools, endpoint
+│   ├── mcp/               # access, tools, endpoint, uploads, content-types
 │   └── __tests__/
 ├── db/src/models/         # auth, users, oidc-settings, app-settings, buckets, documents, tags, document-tags, share-links
 ├── .agents/plan.md        # this file
@@ -321,8 +321,18 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
   - Every write tool's description tells the agent to give the user `shareLink.url` and its expiry. That text is how the agent learns what to do with the result.
 - **Scope:** every tool is limited to documents with `bucket_id` equal to the endpoint's bucket. That is the one rule in `mcp/access.ts`, and tests cover a document in another bucket.
 - **Settings → MCP:**
-  - per bucket: the enabled and writable switches, a copyable endpoint URL, and a `claude mcp add --transport http <url> --header "x-api-key: …"` snippet
-  - the API key list, with keys shown once at creation
+  - per bucket: the enabled and writable switches, a copyable endpoint URL, and a `claude mcp add --transport http <slug> <url> --header "x-api-key: …"` snippet (`--header` is variadic, so it goes last)
+  - the API keys stay on their own tab, which this one links to (decided in step 5)
+- **Decided in step 5:**
+  - The key is checked before the slug: no key, a bad key or a session is 401 on any slug, so a stranger cannot probe which slugs exist. With a key, an unknown slug, another owner's bucket and a disabled bucket are the same 404.
+  - Results are JSON, as a text block and as `structuredContent`. A failure is an `isError` result with a message that says what to do next.
+  - `list_documents({ title?, contentType?, limit?, cursor? })`: `title` matches a substring and `contentType` a prefix (`image/`), both ignoring case; `limit` is at most `pageSize`; `cursor` is the id of the last document of the page before (keyset on `created_at, id`, compared in Postgres).
+  - `get_document` reads text-like types (`text/*`, JSON, XML, YAML, SVG and the like) as text, images and PDFs as an embedded resource with the URI `s3a://<slug>/<id>`.
+  - `upload_document` stores a text type that names no charset with `; charset=utf-8`, since it stores the text as UTF-8.
+  - `create_upload` is also capped at `MCP_DEFAULTS.maxPresignedPutBytes` (5 GiB): a presigned PUT is one PutObject. Its `curl` is `curl --fail-with-body -T PATH_TO_FILE -H 'Content-Type: …' '<url>'`.
+  - `complete_upload` refuses a size mismatch by removing the object and the row (start again with `create_upload`), and on a document that is already ready answers it again, making a new link when `share` is given.
+  - `create_share_link` is a write tool: a read-only bucket makes no links.
+  - The endpoint URL in Settings is built in the browser from its own origin; Vite proxies `/mcp` in dev.
 
 ## Auth and the single owner (D1)
 
@@ -373,7 +383,7 @@ not belong to the caller answers `NOT_FOUND`.
 | `UPLOAD_DEFAULTS` | `maxUploadBytes` (50 GiB, the bound on `app_settings.max_upload_bytes`; lib-storage's 10,000 parts × `partSizeBytes` 8 MiB ≈ 78 GiB is the real ceiling), `minUploadBytes` (1 MiB), `concurrency`, `pendingTtlMinutes` (60), `sweepIntervalMinutes` (10), `partSizeBytes`, `partQueueSize` |
 | `SHARE_LINK_DEFAULTS` | `maxExpiryHours` (168), `minExpiryHours` (1), `labelMaxLength` (100) |
 | `COPY_DEFAULTS` | `maxSingleCopyBytes` (5 GiB), `copyPartSizeBytes` (512 MiB), `copyPartQueueSize` (4): a re-key's copy in parts |
-| `MCP_DEFAULTS` | `inlineTextBytes` (256 KiB, read), `inlineBinaryBytes` (10 MiB, read), `inlineUploadBytes` (5 MiB, `upload_document`), `uploadUrlTtlMinutes` (15), `pageSize` (50). The `/mcp` body cap in `HTTP_DEFAULTS` must stay above `inlineUploadBytes`. `create_upload` is bounded by `app_settings.max_upload_bytes` |
+| `MCP_DEFAULTS` | `inlineTextBytes` (256 KiB, read), `inlineBinaryBytes` (10 MiB, read), `inlineUploadBytes` (5 MiB, `upload_document`), `uploadUrlTtlMinutes` (15, below `UPLOAD_DEFAULTS.pendingTtlMinutes`), `pageSize` (50), `maxPresignedPutBytes` (5 GiB, one PUT). The `/mcp` body cap, `HTTP_DEFAULTS.mcpBodyLimitBytes` (16 MiB), must stay above `inlineUploadBytes`, with room for JSON escaping. `create_upload` is bounded by `app_settings.max_upload_bytes` as well |
 | `BUCKET_DEFAULTS` | `probeKey` (`.s3-artifacts-mcp-probe`), `testTimeoutMs` (10 000), `clientCacheSize` |
 | `HTTP_DEFAULTS`, `AUTH_DEFAULTS`, `OPERATION_LIMIT_DEFAULTS`, `DATABASE_DEFAULTS` | As Engrafo |
 
@@ -420,7 +430,7 @@ Each step is one or more Conventional Commits, and each ends green.
 4. **Share links.** *(Done.)*
    - The model, signing, `rekeyDocument`, the share dialog, the document's link list, Settings → Share links, Settings → General.
    - Also: the upload limit from `app_settings` in `createDocumentUpload`, the PUT route and the upload panel; the bucket form's warning when the access key changes.
-5. **MCP: the goal.**
+5. **MCP: the goal.** *(Done.)*
    - `/mcp/b/:slug`, access, the write tools (`upload_document`, `create_upload`, `complete_upload`, `create_share_link`), read tools, Settings → MCP.
    - The RustFS acceptance test.
    - Done when: Claude Code, connected to one bucket, writes a markdown file and a PDF, uploads both, and hands back working share links. It cannot see another bucket.
