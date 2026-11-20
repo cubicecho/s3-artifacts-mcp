@@ -14,10 +14,12 @@ needs. The agreed design is [`.agents/plan.md`](.agents/plan.md). Read it
 before adding a feature: it has the data model, the GraphQL surface, the MCP
 tools and the build order.
 
-**Where the build is:** step 6 of the plan (tags). Sign-in, API keys,
-health, settings, buckets, documents (upload, scan, preview, rename, delete, the
-bucket tree), share links (with re-keying), `app_settings`, the per-bucket
-MCP endpoints and tags exist. Step 7 (ship) is next.
+**Where the build is:** v1 is done, all seven steps of the plan. Sign-in, API
+keys, health, settings, buckets, documents (upload, scan, preview, rename,
+delete, the bucket tree), share links (with re-keying), `app_settings`, the
+per-bucket MCP endpoints and tags exist, and step 7 shipped them: the image,
+the compose files, CI with the RustFS integration job, and the release to GHCR.
+What comes next is under "Later" in the plan.
 
 ## Skills to load
 
@@ -57,7 +59,7 @@ Packages: `@cubicecho/s3-artifacts-mcp-app`, `@cubicecho/s3-artifacts-mcp-server
 
 ## Project structure
 
-As of step 6.
+As of step 7.
 
 ```
 s3-artifacts-mcp/
@@ -107,7 +109,8 @@ s3-artifacts-mcp/
 │       ├── ssl.ts           # requiresSsl
 │       └── index.ts         # The DB type, the singleton, closeDatabase
 ├── .agents/plan.md          # The agreed design
-├── Dockerfile               # node:26-slim, no OCR packages
+├── .github/workflows/       # ci (check, postgres, integration, boot), release (semantic-release, GHCR)
+├── Dockerfile               # node:26-slim, no OCR packages, runtime installs without dev or optional packages
 ├── docker-compose.dev.yml   # Postgres + RustFS for development
 ├── docker-compose.yml       # The whole stack, built from this checkout
 └── docker-compose.quickstart.yml  # The whole stack, pulled from GHCR: what self-hosters paste
@@ -124,6 +127,7 @@ npm run db:migrate       # apply migrations
 npm run codegen          # GraphQL types for both server and app
 npm run check            # codegen + biome + tsc --noEmit, all three workspaces
 npm test                 # Vitest: node, dom and storybook projects
+npm run test:integration # the *.integration.test.ts files, against the bucket S3AM_IT_* names
 npm run storybook        # Storybook on 6006
 npm run build-storybook  # Static Storybook to app/storybook-static
 ```
@@ -154,6 +158,7 @@ what is about the network.** Everything else is a setting in the UI.
 | `PORT` (optional) | Listening port. |
 | `TRUST_PROXY` (optional) | The sign-in throttle needs it before anyone is signed in. |
 | `SECURE_LOCAL_NET` (optional) | Sign-in without a link. It must not be switchable from a UI it unlocks. |
+| `EXPOSE_MAGIC_LINK` (optional) | The sign-in link in the API response in production. The same reason as `SECURE_LOCAL_NET`. |
 | `DB_CONNECT_TIMEOUT_MS` (optional) | Boot, before the database answers. |
 
 - **Don't add an env var for a setting.** A value the owner may change goes in
@@ -501,7 +506,8 @@ easy to break:
   against a real RustFS: upload with tags and a share, list by those tags, open
   the link with no credentials, a binary file through `create_upload`, a plain `fetch` PUT and
   `complete_upload`, then a re-key and a 404. It is skipped unless
-  `S3AM_IT_ENDPOINT` is set, and deletes every object it makes.
+  `S3AM_IT_ENDPOINT` is set, and deletes every object it makes. CI's
+  `integration` job runs it (see "CI proves the real bucket" below).
 - Settings → MCP (`mcp-settings`) shows each bucket's switches, its endpoint
   from the browser's origin (`lib/mcp.ts`, kept in step with `MCP_ROUTE` by
   hand) and a `claude mcp add --transport http <slug> <url> --header "x-api-key:
@@ -585,14 +591,34 @@ there. The cubeui shells one level up are the same.
 login or push, and every compose file and the README name the GHCR image. This
 overrides `cubicecho_backend` → `deploy.md`, which makes Docker Hub primary.
 `docker-compose.quickstart.yml` is a published artifact (the README links its
-raw URL on `main`). It pulls `:latest` and never grows a `build:` key. Its
-header comments are install instructions, so an env change there changes them
-too.
+raw URL on `main`). It pulls `:${S3AM_VERSION:-latest}` and never grows a
+`build:` key. Its header comments are install instructions, and the README's
+Quickstart walks the same steps, so an env change there changes both.
 
-## Planned — see .agents/plan.md
+**CI proves the real bucket, and refuses to skip it.** The `integration` job
+starts `docker-compose.dev.yml`'s RustFS (`up -d rustfs`, then
+`run --rm rustfs-init` for the bucket), sets the `S3AM_IT_*` variables to it
+and runs `npm run test:integration` with Vitest's JSON reporter. A suite with no
+`S3AM_IT_ENDPOINT` skips itself and passes, so the next step fails the job
+unless every `server/src/__tests__/**/*.integration.test.ts` file ran and every
+test in it passed, none skipped or todo. A new integration file only has to
+match that name; it needs a real bucket to have run, never an in-memory one.
 
-Step 7 (ship) is what is left. When you build a step, move its rules up into
-"Rules that carry weight" and the structure tree.
+**The runtime image installs with `--omit=dev --omit=optional`.** better-auth
+and drizzle-orm name vitest, drizzle-kit, PGlite and React as optional peers,
+which npm marks `devOptional` and keeps unless both kinds are omitted: about
+200 MB of build tools. The only optional-only packages in the lockfile are
+esbuild's, rolldown's and lightningcss's platform binaries. A runtime
+dependency that needs an optional package would lose it here: check the
+lockfile before adding one, and `docker run --rm --entrypoint ls <image>
+node_modules` after.
+
+## Later — see .agents/plan.md
+
+v1 is built. What it leaves out on purpose (more accounts, links through the
+app, moving documents, keys limited to buckets, link passwords) is listed under
+"Later" in the plan. When you build one, move its rules up into "Rules that
+carry weight" and the structure tree.
 
 ## Stories are the frontend tests
 
