@@ -9,9 +9,9 @@ small, self-hosted store in between. It keeps the documents' metadata in
 Postgres, the bytes in buckets you configure, and gives each bucket its own MCP
 endpoint.
 
-> **Status: early.** This is step 5 of [the plan](.agents/plan.md): sign-in,
-> API keys, settings, buckets, documents, share links and MCP. Everything
-> marked *planned* below is designed but not built yet.
+> **Status: early.** This is step 6 of [the plan](.agents/plan.md): sign-in,
+> API keys, settings, buckets, documents, share links, MCP and tags. Shipping
+> (step 7) is next.
 
 ## What it does
 
@@ -34,8 +34,12 @@ endpoint.
 - **Share links**: a link with a permission (view or download) and an expiry
   you choose, from an hour to 7 days, signed for the bucket itself. Listed on
   the document's page and in Settings → Share links. See [Share links](#share-links).
-- **Tags** *(planned)*: yours, to sort and filter documents. There are no
-  folders.
+- **Tags**: yours, across every bucket, each with a colour and unique by name
+  ignoring case. Made, renamed, recoloured and deleted on the Tags page, or made
+  on the spot from a document's tag picker. The documents list shows them in a
+  column, tags or untags the rows you choose in one go, and filters by tags (any
+  or all), bucket, title and type, all held in the URL so a filtered list can be
+  linked. Agents tag what they upload. There are no folders.
 - **MCP per bucket**: each bucket is its own endpoint, `/mcp/b/<slug>`, off
   until you turn it on in Settings → MCP and read-only until you make it
   writable. An agent connected to one bucket sees nothing else.
@@ -59,10 +63,13 @@ Any MCP client that speaks Streamable HTTP works the same way: the endpoint, and
 the key as `x-api-key` or `Authorization: Bearer`. A session cookie is never
 accepted there. An unknown slug and a bucket with MCP off answer the same 404.
 
-The tools are `list_documents` and `get_document` on every bucket (text up to
-256 KiB comes back as text, an image or PDF up to 10 MiB as an embedded
-resource), and on a writable one `upload_document`, `create_upload`,
-`complete_upload` and `create_share_link`.
+The tools are `list_documents`, `get_document` and `list_tags` on every bucket
+(text up to 256 KiB comes back as text, an image or PDF up to 10 MiB as an
+embedded resource), and on a writable one `upload_document`, `create_upload`,
+`complete_upload`, `create_share_link` and `tag_document`. Tags are named, not
+picked by id: a name matches ignoring case, and one you have no tag for is
+made. `list_documents` filters by `tags` with `match: "any"` or `"all"`, and
+every document a tool answers carries its tags.
 
 ## How an agent uploads
 
@@ -73,7 +80,7 @@ model already has it as text, so it sends it in one tool call. A text type that
 names no charset is stored as `charset=utf-8`:
 
 ```
-upload_document({ filename, contentType, text, share: { expiresInHours: 24 } })
+upload_document({ filename, contentType, text, tags: ['reports'], share: { expiresInHours: 24 } })
   → { document, shareLink: { url, permission, expiresAt } }
 ```
 
@@ -83,9 +90,9 @@ emitting them as tokens. So the server hands out a presigned PUT URL, the
 agent's shell uploads the file, and a second call finishes it:
 
 ```
-create_upload({ filename, contentType, size })  → { documentId, uploadUrl, expiresAt, headers, curl }
+create_upload({ filename, contentType, size, tags })  → { documentId, uploadUrl, expiresAt, headers, curl }
 curl --fail-with-body -T report.pdf -H 'Content-Type: application/pdf' '<uploadUrl>'
-complete_upload({ documentId, share: {} })      → { document, shareLink }
+complete_upload({ documentId, share: {} })            → { document, shareLink }
 ```
 
 The upload URL works for 15 minutes and carries the type and size in its
