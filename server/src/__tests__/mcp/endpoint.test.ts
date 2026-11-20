@@ -791,7 +791,7 @@ describe('/mcp/b/:slug', () => {
       }
     });
 
-    it('lists every tag of the owner’s with how many documents here carry it', async () => {
+    it('lists the tags used here and unused ones, with counts, and none used only in another bucket', async () => {
       const client = await connect(SLUG.readOnly);
       const here = await document(readOnlyId, 'notes', { filename: 'counted.txt' });
       const pending = await document(readOnlyId, 'notes', {
@@ -801,14 +801,14 @@ describe('/mcp/b/:slug', () => {
       await tagDirectly(here.id, ['counted-here']);
       await tagDirectly(pending.id, ['counted-here']);
       const away = await document(writableId, 'artifacts', { filename: 'away.txt' });
-      await tagDirectly(away.id, ['only-elsewhere']);
+      await tagDirectly(away.id, ['only-elsewhere', 'counted-here']);
+      await db.insert(tags).values({ userId: owner, name: 'unused', color: '#123456' });
 
       const { tags: listed } = await ok(client, 'list_tags');
       const byName = new Map((listed as { name: string; documents: number }[]).map((tag) => [tag.name, tag]));
       expect(byName.get('counted-here')).toMatchObject({ documents: 1, color: '#22c55e' });
-      expect(byName.get('only-elsewhere')).toMatchObject({ documents: 0 });
-      const otherTags = await db.select().from(tags).where(eq(tags.userId, owner));
-      expect(listed).toHaveLength(otherTags.length);
+      expect(byName.get('unused')).toMatchObject({ documents: 0 });
+      expect(byName.has('only-elsewhere')).toBe(false);
     });
 
     it('adds and removes tags by name, and touches nothing outside the bucket', async () => {

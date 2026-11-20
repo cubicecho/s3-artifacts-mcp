@@ -310,7 +310,7 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
     - anything larger comes back as metadata only, with a note
 - **Decided in step 6:**
   - Tags are named, not picked, on every tool, matched ignoring case. A name in `tags` or `add` the owner has no tag for is made; a name in `remove` no tag has is no matter. Names are checked before anything is stored.
-  - `list_tags` answers every tag of the owner's, with its colour and how many ready documents in this bucket carry it, 0 for one used only elsewhere. Tags belong to the owner, not a bucket, and reusing a name means seeing it.
+  - `list_tags` answers the tags on a document in this bucket and those on no document yet, with colour and count here. A tag used only in other buckets is left out, so its name does not leak another bucket's contents to this endpoint. Naming it in an upload still reuses it.
   - Every document a tool answers carries `tags`: its tag names, sorted.
   - `tag_document` is a write tool, idempotent, and answers the document with its tags. A name in both `add` and `remove` is refused.
 - **Write tools** (only when `mcp_writable` is on). These are what the goal runs on.

@@ -8,7 +8,7 @@ import {
   documentTags,
   tags,
 } from '@cubicecho/s3-artifacts-mcp-db/schema';
-import { and, asc, count, desc, eq, exists, ilike, inArray, type SQL, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, exists, ilike, inArray, or, type SQL, sql } from 'drizzle-orm';
 import { parseDocumentId } from '../documents/rows.ts';
 
 // What an MCP client may reach: one bucket, the one its endpoint names, and the documents in it. Everything else
@@ -255,8 +255,9 @@ export interface BucketTagCount {
 }
 
 /**
- * Every one of the owner's tags, by name, with how many ready documents in the bucket carry each. Tags belong to the
- * owner, not to a bucket, so one no document here carries is listed with 0: tagging by its name reuses it.
+ * The owner's tags an agent on this bucket may see, by name, with how many ready documents in the bucket carry each:
+ * those on a document here, and those on no document at all (made on the Tags page, waiting to be used). A tag used
+ * only in other buckets is left out, since its name would tell this endpoint about a bucket it cannot see.
  *
  * @param db - The database.
  * @param bucket - The endpoint's bucket.
@@ -271,6 +272,7 @@ export async function bucketTagCounts(db: DB, bucket: Bucket): Promise<BucketTag
     .leftJoin(documents, and(eq(documents.id, documentTags.documentId), inThisBucket))
     .where(eq(tags.userId, bucket.userId))
     .groupBy(tags.id)
+    .having(or(sql`${count(documents.id)} > 0`, sql`${count(documentTags.documentId)} = 0`))
     .orderBy(asc(sql`lower(${tags.name})`));
   return rows;
 }

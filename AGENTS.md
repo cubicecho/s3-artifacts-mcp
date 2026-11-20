@@ -482,9 +482,10 @@ easy to break:
   matched ignoring case; a name the owner has no tag for is made
   (`ensureTagsNamed`, which finds rather than refuses a name made alongside). The
   names are checked before anything is stored. `list_documents` filters by
-  `tags` with `match: 'any' | 'all'`, `list_tags` answers every tag of the
-  owner's with how many ready documents in this bucket carry it (0 for one used
-  only elsewhere), and every document a tool answers carries `tags`. The tag
+  `tags` with `match: 'any' | 'all'`, `list_tags` answers the tags on a
+  document in this bucket and the ones on no document at all, with how many ready
+  documents here carry each; a tag used only in other buckets is left out, so an
+  endpoint never learns about a bucket it cannot see, and every document a tool answers carries `tags`. The tag
   reads are in `access.ts`, under `inBucket`, like every other.
 - **Text uploaded inline is stored as UTF-8**, so a text type with no charset
   gets `; charset=utf-8` (`mcp/content-types.ts`).

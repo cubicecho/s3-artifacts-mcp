@@ -167,7 +167,7 @@ function instructionsFor(bucket: Bucket): string {
     `${reach} To hand the user a file you made, store it here and give them a share link. ` +
     'Text you wrote yourself (markdown, HTML, CSV, JSON, code): upload_document with `share`. ' +
     'A file on disk (PDF, image, archive): create_upload, run the curl command it gives, then complete_upload with ' +
-    `\`share\`. Either upload takes \`tags\`, by name, to file it; list_tags names the owner's. ${HAND_OVER}`
+    `\`share\`. Either upload takes \`tags\`, by name, to file it; list_tags names the ones in use. ${HAND_OVER}`
   );
 }
 
@@ -287,7 +287,7 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
     {
       title: 'List tags',
       description:
-        "The owner's tags, by name, with each one's colour and how many documents in this bucket carry it (0 for a tag used only elsewhere). Tags are the owner's across every bucket, and a name matches ignoring case.",
+        "The tags in use in this bucket, and the owner's unused ones, by name, with each one's colour and how many documents in this bucket carry it. A name matches ignoring case.",
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
