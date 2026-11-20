@@ -14,9 +14,9 @@ needs. The agreed design is [`.agents/plan.md`](.agents/plan.md). Read it
 before adding a feature: it has the data model, the GraphQL surface, the MCP
 tools and the build order.
 
-**Where the build is:** step 1 of the plan (scaffold). Sign-in, API keys,
-health and the settings shell exist. Buckets, documents, share links, MCP and
-tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
+**Where the build is:** step 2 of the plan (buckets). Sign-in, API keys,
+health, settings and buckets (Settings → Buckets) exist. Documents, share
+links, MCP and tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
 Don't write code or docs as if they exist.
 
 ## Skills to load
@@ -47,7 +47,7 @@ As Engrafo, minus OCR, pgvector and the embedding model.
 | API | graphql-yoga 5 on Express 5, drizzle-graphql generated schema + SDL extensions |
 | Database | Drizzle `1.0.0-rc.5` + PostgreSQL (`postgres-js`); PGlite in tests only |
 | Auth | better-auth (magic link, OIDC pairing, api-key plugin), `@cubicecho/graphql-better-auth` |
-| Storage (planned) | `@aws-sdk/client-s3`, `@aws-sdk/lib-storage`, `@aws-sdk/s3-request-presigner` |
+| Storage | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` (`@aws-sdk/lib-storage` arrives with uploads in step 3) |
 | MCP (planned) | `@modelcontextprotocol/sdk`, stateless Streamable HTTP |
 | Testing | Vitest (node on PGlite, dom), Storybook + Playwright |
 | Tooling | Biome, Node 26 ESM with no server build, semantic-release, Docker (`node:26-slim`) |
@@ -57,7 +57,7 @@ Packages: `@cubicecho/s3-artifacts-mcp-app`, `@cubicecho/s3-artifacts-mcp-server
 
 ## Project structure
 
-As of step 1. The folders later steps add are in the plan's "Layout".
+As of step 2. The folders later steps add are in the plan's "Layout".
 
 ```
 s3-artifacts-mcp/
@@ -70,25 +70,27 @@ s3-artifacts-mcp/
 │       │   ├── ui/          # cubeui primitives: vendored, not linted
 │       │   ├── *.tsx        # cubeui shells (PageLayout, CardLayout, SidebarLayout, LoadState, …)
 │       │   ├── layouts/     # app-layout (the sidebar shell around every signed-in page), require-auth
-│       │   └── domain/      # sso-pairing, create-api-key-dialog, the API key settings
-│       ├── routes/          # login, verify, sso, settings (Sign-in, API keys), documents (placeholder)
+│       │   └── domain/      # bucket-settings, bucket-form-dialog, bucket-test-report, sso-pairing, api-key-settings, create-api-key-dialog
+│       ├── routes/          # login, verify, sso, settings (Buckets, Auth, API keys, Appearance), documents (placeholder)
 │       ├── lib/             # apollo, auth, page, cn()
 │       └── main.tsx         # Providers + the router
 ├── server/                  # GraphQL API (port 3005)
 │   ├── __generated__/       # Generated SDL (not committed)
 │   └── src/
 │       ├── index.ts         # Boot only: preflight, wait for Postgres, migrate, createApp, listen, stop on a signal
-│       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env
+│       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env, secrets
 │       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs)
 │       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema
 │       ├── auth/            # better-auth (with the owner gate), auth-host, admin, rate-limit, resolvers
 │       ├── sso/             # Pairing an OIDC provider from a setup URL: settings, pairing (RFC 7591/7592), resolvers
 │       ├── api-keys/        # resolvers: list, make and revoke the caller's API keys
+│       ├── buckets/         # presets, input (validation, slugs), test (the connection probe), sdl, resolvers
+│       ├── storage/         # storage (the Storage interface), s3 (one bucket), registry (all of them)
 │       └── __tests__/       # Server tests, in the same folders as src; helpers.ts at the root
 ├── db/
 │   ├── drizzle/             # Generated migrations (committed)
 │   └── src/
-│       ├── models/          # auth (better-auth's tables), users, oidc-settings
+│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets
 │       ├── schema.ts        # Every model
 │       ├── relations.ts     # defineRelations config (drives the GraphQL schema)
 │       ├── defaults.ts      # DATABASE_DEFAULTS
@@ -138,7 +140,7 @@ what is about the network.** Everything else is a setting in the UI.
 | Var | Why it is in env |
 |---|---|
 | `DATABASE_URL` | Settings live in the database. |
-| `BETTER_AUTH_SECRET` | Signs sessions. From step 2 it also derives the key bucket secrets and share URLs are encrypted with. |
+| `BETTER_AUTH_SECRET` | Signs sessions, and derives the key bucket secrets (later share URLs) are encrypted with. Rotating it makes every stored bucket secret unreadable; Settings then asks for each again. |
 | `APP_URL` (optional) | Magic-link and OIDC redirect URLs. |
 | `PORT` (optional) | Listening port. |
 | `TRUST_PROXY` (optional) | The sign-in throttle needs it before anyone is signed in. |
@@ -171,9 +173,10 @@ The rules are in `cubicecho_backend` → `schema.md`. What is particular here:
   must declare it too, or a variable will not typecheck against it.
 - **Tables kept out of the schema** are excluded in `build-schema.ts`:
   better-auth's (`sessions`, `accounts`, `verifications`, `apikeys`) and
-  `oidc_settings`, which holds client secrets. A planned table with a secret
-  column excludes that column (`buckets.secret_access_key_enc`,
-  `share_links.url_enc`).
+  `oidc_settings`, which holds client secrets. A table with a secret column
+  excludes that column: `buckets.secret_access_key_enc` now, `share_links.url_enc`
+  in step 4. Mutations that return such a row build it with drizzle-graphql's
+  `resolveSelection`, so the column cannot leak through a hand-written path.
 
 ## Rules that carry weight
 
@@ -217,7 +220,7 @@ for speed or for tests: tests run on PGlite.
 
 **OIDC comes only from pairing in the UI.** There are no `OIDC_*` env vars and
 no `effectiveOidc` override. A setup URL (`<issuer>#setup=<token>&name=<name>`)
-is pasted on the login page while there are no users, or in Settings → Sign-in
+is pasted on the login page while there are no users, or in Settings → Auth
 by the owner after that. `sso/pairing.ts` registers the app by Dynamic Client
 Registration (RFC 7591) and keeps the client in `oidc_settings`. Unpairing
 deletes it at the provider (RFC 7592) and forgets the row even when the provider
@@ -309,8 +312,41 @@ body only with the `page` and `prose` columns, so every full-width page passes
 
 **Settings sections are tabs in the query string** (`?tab=`), a `Link` per tab,
 so a section can be linked and survives a reload. An unknown tab opens the
-first. Step 1 has Sign-in and API keys; the plan adds Buckets, Share links, MCP
-and General.
+first. The tabs are Buckets, Auth, API keys and Appearance; the plan adds Share
+links, MCP and General. Link to one with `settingsLink(tab)`. **The theme is
+chosen only on Appearance** (the card picker); the sidebar, the bar and page
+headers carry no theme picker. The sign-in pages keep their compact one, since
+nobody signed out can reach Settings.
+
+**Buckets are rows, each with its own connection.** One instance mixes
+accounts and providers (AWS S3, MinIO, RustFS, Backblaze B2 side by side).
+Providers are only presets (`buckets/presets.ts`) that fill the form; there is
+no Cloudflare R2 preset. Rules that are easy to break:
+
+- **Secrets are sealed** by `core/secrets.ts` (AES-256-GCM, key from
+  `BETTER_AUTH_SECRET` by HKDF, a purpose bound in as AAD) and never returned.
+  A secret that no longer opens is `Bucket.secretReadable: false`, not a crash.
+- **The `StorageRegistry` caches by bucket id only**, never by provider or
+  endpoint, and every bucket write calls `invalidate`. It is injected through
+  `createApp` and read from the context, so tests hand in the in-memory backend
+  (`__tests__/memory-storage.ts`).
+- **Two clients per bucket**, because a signature covers the host: `endpoint`
+  for the server, `public_endpoint` for signing share links.
+- **Clients send checksums only when required**
+  (`requestChecksumCalculation` / `responseChecksumValidation` =
+  `WHEN_REQUIRED`). The SDK's default flexible checksums are refused by B2 and
+  older MinIO. For the same reason a single-key delete is `DeleteObject`, not
+  `DeleteObjects`.
+- **`testBucket` runs before every save** that changes the connection: head
+  bucket, put, get, share link (presign on `public_endpoint` and fetch), delete.
+  A failure before the share link refuses the save with `BAD_USER_INPUT` and
+  `extensions { reason, step, errorCode }`. The share-link step is only a
+  warning. The delete always runs once the put passed, so a probe is never left
+  behind.
+- **Slugs are unique across the instance**, because they name the MCP endpoint.
+  A taken slug is `CONFLICT`, including when two saves race for it.
+- There is always a default while any bucket exists: the first is made the
+  default, and deleting the default promotes the oldest remaining one.
 
 **`app/src/components/ui/` is vendored** from the cubeui registry and kept as
 published, so `shadcn add` can update it. `biome.json` turns lint and format off
@@ -330,12 +366,6 @@ too.
 None of this exists yet. When you build a step, move its rules up into "Rules
 that carry weight" and the structure tree, and delete them here.
 
-- **Buckets (step 2).** Managed by the owner in Settings, with S3, MinIO and
-  RustFS presets. Secrets are encrypted at rest (AES-256-GCM, key from
-  `BETTER_AUTH_SECRET` by HKDF) and never returned in full. A `StorageRegistry`
-  is injected through `createApp`. Each bucket gets two clients, because a
-  signature covers the host: `endpoint` for the server, `public_endpoint` for
-  signing. `testBucket` runs before every save.
 - **Documents (step 3).** A document is created `pending_upload` before its
   bytes exist. The app's uploads and downloads stream through the server
   (`/api/documents/:id/content`), so the app needs no bucket CORS. Object keys

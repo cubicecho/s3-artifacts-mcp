@@ -168,7 +168,7 @@ tenancy test enforces it).
 - `id`, `user_id`
 - `slug`: unique, URL-safe; names the MCP endpoint
 - `name`: shown in the UI
-- `provider`: `s3` | `minio` | `rustfs`. Only a preset, see below.
+- `provider`: `s3` | `minio` | `rustfs` | `b2`. Only a preset, see below. Each bucket has its own endpoint and credentials, so one instance can mix accounts and providers (say AWS S3, MinIO and Backblaze B2 side by side).
 - `endpoint`: the address the server uses. Null on AWS means the regional default.
 - `public_endpoint`: the address a share link is signed for. Defaults to `endpoint`.
 - `region`, `bucket`
@@ -216,6 +216,8 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 - **Provider presets** fill the form; the owner can override any field:
   - `s3`: path-style off, region required, endpoint optional
   - `minio`, `rustfs`: path-style on, endpoint required, region `us-east-1`
+  - `b2` (Backblaze B2's S3-compatible API): path-style off, endpoint `https://s3.<region>.backblazeb2.com` required, region required (derived from the endpoint when left empty)
+  - Every client sends checksums only when required (`requestChecksumCalculation` / `responseChecksumValidation` = `WHEN_REQUIRED`), since some S3-compatible backends reject the SDK's default ones.
 - **Test connection** (`testBucket`, also run before every save):
   1. `HeadBucket`
   2. PUT, GET and DELETE a probe object
