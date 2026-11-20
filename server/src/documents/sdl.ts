@@ -80,7 +80,7 @@ export const DOCUMENTS_SDL = parse(`
     answers 404 from the bucket. A scanned file leaves the key the owner put it at for one the app makes. NOT_FOUND
     for a document that is missing or someone else's; CONFLICT for one still uploading, or one changed while this
     ran; BAD_USER_INPUT when the bucket's secret can no longer be decrypted; STORAGE_ERROR when the bucket refuses
-    the copy, with nothing changed.
+    the copy or the old object's delete, with nothing changed.
     """
     rekeyDocument(id: UUID!): Document!
   }

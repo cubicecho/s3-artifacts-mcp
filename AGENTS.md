@@ -419,9 +419,10 @@ the bucket, not this database, decides whether one opens.**
   (`documents/rekey.ts`): copy to `objectKeyFor(newUuid, filename)`, then move
   the row (guarded on the old key, so a racing re-key or delete answers
   CONFLICT and the copy is deleted), then delete the old object. Copy first so
-  the row never names an empty key; the delete last, and only logged when it
-  fails, because the document is whole at its new key by then and the old links
-  merely live until they expire. A scanned file leaves the owner's key for an
+  the row never names an empty key; the delete last. If the bucket refuses that
+  delete the old links still work, so the move is undone (row back to the old
+  key, copy deleted) and STORAGE_ERROR says nothing was revoked: a link shown as
+  revoked must really be dead. A scanned file leaves the owner's key for an
   app-made one, and the confirm says so. Copies past `COPY_DEFAULTS.maxSingleCopyBytes`
   (CopyObject's 5 GiB) go in parts.
 - Rotating a bucket's access key kills every link signed with it; the bucket

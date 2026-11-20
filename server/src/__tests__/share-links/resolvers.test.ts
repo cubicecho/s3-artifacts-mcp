@@ -338,15 +338,16 @@ describe('share links', () => {
       expect((await backend.fetch(link.url)).status).toBe(HttpStatus.Ok);
     });
 
-    it('stands when the old object cannot be deleted, logging what is left behind', async () => {
+    it('undoes the move when the old object cannot be deleted, since its links would still work', async () => {
       const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-      await share();
+      const link = await share();
       bucket.failures.delete = 'AccessDenied';
-      const { rekeyDocument } = await client().expectOk(REKEY, { id: document.id });
-      expect(await currentKey()).toBe(rekeyDocument.objectKey);
-      expect(bucket.objects.has(document.objectKey)).toBe(true);
-      expect(errors).toHaveBeenCalledWith(expect.stringContaining(`could not delete the old object`));
-      expect((await client().expectOk(ALL_LINKS)).shareLinks[0].state).toBe(ShareLinkState.Revoked);
+      const { code, message } = await client().expectError(REKEY, { id: document.id });
+      expect(code).toBe(ErrorCode.StorageError);
+      expect(message).toMatch(/AccessDenied.*could not be revoked\. Nothing was changed/);
+      expect(await currentKey()).toBe(document.objectKey);
+      expect((await client().expectOk(ALL_LINKS)).shareLinks[0].state).toBe(ShareLinkState.Active);
+      expect((await backend.fetch(link.url)).status).toBe(HttpStatus.Ok);
       errors.mockRestore();
     });
 

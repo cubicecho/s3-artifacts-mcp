@@ -15,9 +15,10 @@ import { ownDocument } from './rows.ts';
 // - Copy first, so the row never names a key with nothing at it. A failed copy changes nothing.
 // - The row next. Until it moves, the old key is still the document; once it has, every link signed for the old key
 //   reads as revoked, because its `object_key` no longer matches.
-// - The old object last. Deleting it is what makes the old URLs answer 404. If that delete fails, the document is
-//   whole at its new key and the re-key stands; the old object is logged, and its links keep working until they
-//   expire. Deleting first would risk a document whose row names an object that is gone.
+// - The old object last. Deleting it is what makes the old URLs answer 404. If the bucket refuses that delete, the
+//   old links still work, so the re-key is undone: the row goes back to the old key and the copy is deleted, and the
+//   owner is told nothing was revoked. A link the app shows as revoked must really be dead. Deleting first would
+//   risk a document whose row names an object that is gone.
 
 /**
  * Deletes an object a re-key no longer needs, logging rather than throwing when the bucket refuses.
@@ -43,7 +44,7 @@ async function deleteQuietly(storage: Storage, document: Document, key: string, 
  * @returns The document at its new key.
  * @throws NOT_FOUND for a document that is missing or someone else's; CONFLICT for one still uploading, or one
  *   re-keyed or deleted while this ran; BAD_USER_INPUT when the bucket's secret no longer decrypts; STORAGE_ERROR
- *   when the bucket refuses the copy, with nothing changed.
+ *   when the bucket refuses the copy or the old object's delete, with nothing changed.
  */
 export async function rekeyDocument(ctx: Context, id: string): Promise<Document> {
   const document = await ownDocument(ctx, id);
@@ -85,6 +86,45 @@ export async function rekeyDocument(ctx: Context, id: string): Promise<Document>
     throw conflict('The document changed while its links were being revoked. Try again.');
   }
 
-  await deleteQuietly(storage, document, oldKey, 'the old object, whose links keep working until they expire,');
+  try {
+    await storage.delete([oldKey]);
+  } catch (error) {
+    const { code } = describeStorageError(error);
+    console.error(`[documents] re-key of ${document.id}: the old object's delete failed: ${errorMessage(error)}`);
+    await undoMove(ctx, storage, document, newKey);
+    throw withCode(
+      `The bucket refused to delete the old file${code === null ? '' : ` (${code})`}, so its links could not be ` +
+        'revoked. Nothing was changed.',
+      ErrorCode.StorageError,
+      { errorCode: code },
+    );
+  }
   return row;
+}
+
+/**
+ * Puts a document back at its old key after the old object would not be deleted, and drops the copy, so the links
+ * signed for the old key read as active again, which they are.
+ *
+ * @param ctx - The request.
+ * @param storage - The document's bucket.
+ * @param document - The document as it was, at its old key.
+ * @param newKey - The key it was moved to.
+ */
+async function undoMove(ctx: Context, storage: Storage, document: Document, newKey: string): Promise<void> {
+  try {
+    const restored = await ctx.db
+      .update(documents)
+      .set({ objectKey: document.objectKey })
+      .where(and(eq(documents.id, document.id), eq(documents.objectKey, newKey)))
+      .returning({ id: documents.id });
+    if (restored.length === 0) {
+      // Changed again meanwhile (deleted, or re-keyed by another request): the copy may be what it names now.
+      return;
+    }
+  } catch (error) {
+    console.error(`[documents] re-key of ${document.id}: could not move the row back: ${errorMessage(error)}`);
+    return;
+  }
+  await deleteQuietly(storage, document, newKey, 'the copy');
 }
