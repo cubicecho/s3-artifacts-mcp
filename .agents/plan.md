@@ -53,6 +53,7 @@ anyone can sign in (see "Environment").
 | D9 | **No passwords on share links.** They get a permission and an expiry. | |
 | D10 | **Bucket secrets and share URLs are encrypted at rest** (AES-256-GCM, key derived from `BETTER_AUTH_SECRET` by HKDF). They are never returned by the API in full. | Engrafo stores its vision key in plaintext; this does not. |
 | D11 | **The tree is buckets and their items; there are no folders.** The sidebar keeps Engrafo's tree, with each bucket as a top-level node and its documents (keys) flat beneath it. Every bucket starts collapsed. Objects sit at the bucket's top level, and a dropped folder uploads flat. Tags are the only way to organise. | Tags live in Postgres, not as S3 object tags. |
+| D12 | **The owner chooses each share link's expiry** (user decision, step 4): presets of 1 hour, 1 day, 3 days and 7 days, or any whole number of hours or days between, shown as the moment the link stops working before it is made. The default comes from Settings → General, which uses the same picker. The UI says 7 days is the most S3 allows. | `SHARE_LINK_DEFAULTS.min/maxExpiryHours` (1, 168) bound it on the server; the app reads them from `appSettingsLimits`. |
 
 ## Out of scope for v1
 
@@ -159,10 +160,11 @@ Conventions as Engrafo: uuid PKs, snake_case, `withTimezone`, `$onUpdate`, an
 index on every FK, `user_id` plus a `scope` entry on every user table (the
 tenancy test enforces it).
 
-**`app_settings`**: a single row.
-- `max_upload_bytes` (default 100 MiB)
-- `default_link_expiry_hours` (default 24, at most 168)
+**`app_settings`**: one row per account, keyed by `user_id` (decided in step 4). With one owner it is the instance's single row, but it is scoped like every other table, so the tenancy test covers it and more accounts stay additive. better-auth's `user.create.after` makes it; a migration made one for every existing account.
+- `max_upload_bytes` (default 100 MiB, from 1 MiB to `UPLOAD_DEFAULTS.maxUploadBytes`, 50 GiB)
+- `default_link_expiry_hours` (default 24, from 1 to 168)
 - `default_link_permission` (`view` | `download`, default `download`)
+- The defaults are `APP_SETTINGS_DEFAULTS` in `db/src/defaults.ts`. The GraphQL type is `AppSettings` (not singularized), read as `appSettings`; the bounds are the `appSettingsLimits` query.
 
 **`buckets`**
 - `id`, `user_id`
@@ -256,11 +258,14 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 - **Creating a link.** `createShareLink(documentId, permission, expiresInHours, label?)`:
   - signs a GET on the bucket's `public_endpoint` with `response-content-disposition` (`inline` for `view`, `attachment; filename=…` for `download`) and `response-content-type`
   - stores the link encrypted and returns the URL
+  - a permission or expiry left out takes the `app_settings` default; only a `ready` document can be shared (CONFLICT otherwise); a label is at most `SHARE_LINK_DEFAULTS.labelMaxLength` (100) characters
   - the app shows the URL with a copy button, and it can be copied again from the list later
+  - the share dialog's expiry is the owner's choice (D12)
+- **State.** `ShareLink.state` is resolved: `revoked` when the link's `object_key` is no longer the document's, else `expired`, else `active`. Revoked wins, so a revoked link stays revoked. `ShareLink.url` answers null when the sealed URL no longer opens (the secret changed).
 - **Limits that come from S3, which the UI states:**
   - **Expiry is capped at 7 days** (SigV4's maximum, on AWS, MinIO and RustFS alike). The expiry picker offers 1 hour to 7 days and no "never". `SHARE_LINK_DEFAULTS.maxExpiryHours = 168`.
   - **A single link cannot be revoked before it expires.** S3 checks the signature, not our database.
-  - **"Revoke all links" re-keys the document** (`rekeyDocument`). It copies the object to `<new objectId>-<filename>`, deletes the old key, updates `object_key`, and marks every link signed for the old key as revoked. Their URLs now answer 404 from the bucket. It is offered on the document page and confirmed with `ConfirmButton`. A scanned document's object is wherever the owner put it, so re-keying one moves their file to an app-made key; the confirm says so.
+  - **"Revoke all links" re-keys the document** (`rekeyDocument`). It copies the object to `<new objectId>-<filename>`, updates `object_key` (guarded on the old key), then deletes the old key, so every link signed for the old key reads as revoked. The row moves before the delete so the document never names an empty key; a failed delete of the old key is logged, not fatal (its links then live until they expire). Objects past CopyObject's 5 GiB are copied in parts (`COPY_DEFAULTS`). Their URLs now answer 404 from the bucket. It is offered on the document page and confirmed with `ConfirmButton`. A scanned document's object is wherever the owner put it, so re-keying one moves their file to an app-made key; the confirm says so.
   - **Rotating the bucket's access key** also kills every link signed with it. The bucket form says so when the access key changes.
   - **`view` is not copy protection.** It only asks the browser to show the file inline, and the form's help text says so.
 - **Listing and deleting.** `deleteShareLink` removes a link from the list and is labelled "Remove from list". It does not stop the URL, and the confirm text says so.
@@ -336,11 +341,11 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 | Section | Contents |
 |---|---|
 | Buckets | List; add/edit dialog (preset, endpoint, public endpoint, region, bucket, access key, secret which can be replaced but not read, path-style); Test; re-enter secret; remove/forget |
-| Share links | All links, with filters, copy, remove from list |
+| Share links | All links, filtered by state (active, expired, revoked), copy, remove from list, a link to each document |
 | MCP | Per-bucket switches and URLs, the client snippet |
 | API keys | Create (shown once), list with last used, revoke |
 | Sign-in | OIDC pairing (Engrafo's `sso-pairing`) |
-| General | Max upload size, default link expiry and permission |
+| General | Max upload size, default link expiry (the share dialog's picker, D12) and permission: one form with Save |
 
 On a fresh instance with no bucket, the documents page shows an empty state that links to Settings → Buckets. Upload is disabled until a bucket passes its test.
 
@@ -365,8 +370,9 @@ not belong to the caller answers `NOT_FOUND`.
 
 | Group | Values |
 |---|---|
-| `UPLOAD_DEFAULTS` | `concurrency`, `pendingTtlMinutes` (60), `sweepIntervalMinutes` (10) |
-| `SHARE_LINK_DEFAULTS` | `maxExpiryHours` (168), `minExpiryHours` (1) |
+| `UPLOAD_DEFAULTS` | `maxUploadBytes` (50 GiB, the bound on `app_settings.max_upload_bytes`; lib-storage's 10,000 parts × `partSizeBytes` 8 MiB ≈ 78 GiB is the real ceiling), `minUploadBytes` (1 MiB), `concurrency`, `pendingTtlMinutes` (60), `sweepIntervalMinutes` (10), `partSizeBytes`, `partQueueSize` |
+| `SHARE_LINK_DEFAULTS` | `maxExpiryHours` (168), `minExpiryHours` (1), `labelMaxLength` (100) |
+| `COPY_DEFAULTS` | `maxSingleCopyBytes` (5 GiB), `copyPartSizeBytes` (512 MiB), `copyPartQueueSize` (4): a re-key's copy in parts |
 | `MCP_DEFAULTS` | `inlineTextBytes` (256 KiB, read), `inlineBinaryBytes` (10 MiB, read), `inlineUploadBytes` (5 MiB, `upload_document`), `uploadUrlTtlMinutes` (15), `pageSize` (50). The `/mcp` body cap in `HTTP_DEFAULTS` must stay above `inlineUploadBytes`. `create_upload` is bounded by `app_settings.max_upload_bytes` |
 | `BUCKET_DEFAULTS` | `probeKey` (`.s3-artifacts-mcp-probe`), `testTimeoutMs` (10 000), `clientCacheSize` |
 | `HTTP_DEFAULTS`, `AUTH_DEFAULTS`, `OPERATION_LIMIT_DEFAULTS`, `DATABASE_DEFAULTS` | As Engrafo |
@@ -411,8 +417,9 @@ Each step is one or more Conventional Commits, and each ends green.
 3. **Documents.**
    - The `documents` model, the upload start mutation, the stream-in and stream-out routes, the sweeper, the documents list, the document page with preview, rename and delete.
    - Done when: a batch of mixed files uploads with per-file progress into a chosen bucket and previews, and shows in the sidebar tree under that bucket. A dropped folder uploads its files flat.
-4. **Share links.**
+4. **Share links.** *(Done.)*
    - The model, signing, `rekeyDocument`, the share dialog, the document's link list, Settings → Share links, Settings → General.
+   - Also: the upload limit from `app_settings` in `createDocumentUpload`, the PUT route and the upload panel; the bucket form's warning when the access key changes.
 5. **MCP: the goal.**
    - `/mcp/b/:slug`, access, the write tools (`upload_document`, `create_upload`, `complete_upload`, `create_share_link`), read tools, Settings → MCP.
    - The RustFS acceptance test.
