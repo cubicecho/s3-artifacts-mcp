@@ -1,6 +1,14 @@
 import type { DB } from '@cubicecho/s3-artifacts-mcp-db';
-import { type Bucket, buckets, type Document, DocumentStatus, documents } from '@cubicecho/s3-artifacts-mcp-db/schema';
-import { and, desc, eq, ilike, type SQL, sql } from 'drizzle-orm';
+import {
+  type Bucket,
+  buckets,
+  type Document,
+  DocumentStatus,
+  documents,
+  documentTags,
+  tags,
+} from '@cubicecho/s3-artifacts-mcp-db/schema';
+import { and, asc, count, desc, eq, exists, ilike, inArray, or, type SQL, sql } from 'drizzle-orm';
 import { parseDocumentId } from '../documents/rows.ts';
 
 // What an MCP client may reach: one bucket, the one its endpoint names, and the documents in it. Everything else
@@ -114,12 +122,21 @@ export async function readyBucketDocument(db: DB, bucket: Bucket, id: unknown): 
   return document;
 }
 
+/** How a list's tags are matched: a document with any of them, or only one with every one. */
+export const TagMatch = { Any: 'any', All: 'all' } as const;
+/** One of the ways in `TagMatch`. */
+export type TagMatch = (typeof TagMatch)[keyof typeof TagMatch];
+
 /** Which of a bucket's documents `listBucketDocuments` reads. */
 export interface DocumentFilter {
   /** Only titles containing this, ignoring case. */
   title?: string;
   /** Only types starting with this, ignoring case: `image/` for every image. */
   contentType?: string;
+  /** Only documents with these tags, by name in any case, as `match` says. */
+  tags?: readonly string[];
+  /** Whether a document needs any of `tags` (the default) or all of them. */
+  match?: TagMatch;
   /** How many at most. */
   limit: number;
   /** The id of the last document of the page before, which this page follows. */
@@ -150,6 +167,12 @@ export async function listBucketDocuments(db: DB, bucket: Bucket, filter: Docume
   if (filter.contentType !== undefined) {
     conditions.push(ilike(documents.contentType, `${escapeLike(filter.contentType)}%`));
   }
+  const tagNames = filter.tags ?? [];
+  if (tagNames.length > 0) {
+    const keys = tagNames.map((name) => name.toLowerCase());
+    const groups = filter.match === TagMatch.All ? keys.map((key) => [key]) : [keys];
+    conditions.push(...groups.map((names) => hasTagNamed(db, names)));
+  }
   if (filter.cursor !== undefined) {
     const after = await bucketDocument(db, bucket, filter.cursor);
     if (after === null) {
@@ -169,6 +192,89 @@ export async function listBucketDocuments(db: DB, bucket: Bucket, filter: Docume
   const page = rows.slice(0, filter.limit);
   const hasMore = rows.length > filter.limit;
   return { documents: page, nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null };
+}
+
+/**
+ * The condition that a document carries one of the owner's tags of these names.
+ *
+ * @param db - The database.
+ * @param keys - Names in lower case.
+ * @returns An `EXISTS` over the document's links.
+ */
+function hasTagNamed(db: DB, keys: readonly string[]): SQL {
+  return exists(
+    db
+      .select({ one: sql`1` })
+      .from(documentTags)
+      .innerJoin(tags, eq(tags.id, documentTags.tagId))
+      .where(
+        and(
+          eq(documentTags.documentId, documents.id),
+          eq(tags.userId, documents.userId),
+          inArray(sql`lower(${tags.name})`, [...keys]),
+        ),
+      ),
+  );
+}
+
+/**
+ * The names of each document's tags, sorted, for documents in the bucket.
+ *
+ * @param db - The database.
+ * @param bucket - The endpoint's bucket.
+ * @param documentIds - Documents already read through this module.
+ * @returns Each document's tag names, by id. A document with none is missing from the map.
+ */
+export async function bucketDocumentTags(
+  db: DB,
+  bucket: Bucket,
+  documentIds: readonly string[],
+): Promise<Map<string, string[]>> {
+  const names = new Map<string, string[]>();
+  if (documentIds.length === 0) {
+    return names;
+  }
+  const rows = await db
+    .select({ documentId: documentTags.documentId, name: tags.name })
+    .from(documentTags)
+    .innerJoin(tags, eq(tags.id, documentTags.tagId))
+    .innerJoin(documents, eq(documents.id, documentTags.documentId))
+    .where(and(inBucket(bucket), eq(tags.userId, bucket.userId), inArray(documentTags.documentId, [...documentIds])))
+    .orderBy(asc(sql`lower(${tags.name})`));
+  for (const { documentId, name } of rows) {
+    names.set(documentId, [...(names.get(documentId) ?? []), name]);
+  }
+  return names;
+}
+
+/** One of the owner's tags, and how many of the bucket's documents carry it. */
+export interface BucketTagCount {
+  name: string;
+  color: string;
+  documents: number;
+}
+
+/**
+ * The owner's tags an agent on this bucket may see, by name, with how many ready documents in the bucket carry each:
+ * those on a document here, and those on no document at all (made on the Tags page, waiting to be used). A tag used
+ * only in other buckets is left out, since its name would tell this endpoint about a bucket it cannot see.
+ *
+ * @param db - The database.
+ * @param bucket - The endpoint's bucket.
+ * @returns The tags, sorted by name ignoring case.
+ */
+export async function bucketTagCounts(db: DB, bucket: Bucket): Promise<BucketTagCount[]> {
+  const inThisBucket = and(inBucket(bucket), eq(documents.status, DocumentStatus.Ready));
+  const rows = await db
+    .select({ name: tags.name, color: tags.color, documents: count(documents.id) })
+    .from(tags)
+    .leftJoin(documentTags, eq(documentTags.tagId, tags.id))
+    .leftJoin(documents, and(eq(documents.id, documentTags.documentId), inThisBucket))
+    .where(eq(tags.userId, bucket.userId))
+    .groupBy(tags.id)
+    .having(or(sql`${count(documents.id)} > 0`, sql`${count(documentTags.documentId)} = 0`))
+    .orderBy(asc(sql`lower(${tags.name})`));
+  return rows;
 }
 
 /**

@@ -8,7 +8,8 @@ import type { LibraryQuery } from '@/__generated__/graphql';
  *
  * `buckets` takes no arguments here, as in Settings → Buckets, so both read the same cache field:
  * a bucket added or removed there shows in the tree without a reload. Sorting is done where it is
- * drawn. A document still `pending_upload` has no bytes yet, so it is not listed.
+ * drawn. A document still `pending_upload` has no bytes yet, so it is not listed. Each document's tags come
+ * with it, so the list's tag column and filter need nothing more, and a tagging that answers them updates both.
  */
 export const Library = graphql(`
   query Library {
@@ -25,6 +26,9 @@ export const Library = graphql(`
         contentType
         size
         createdAt
+        tags {
+          ...TagFields
+        }
       }
     }
   }

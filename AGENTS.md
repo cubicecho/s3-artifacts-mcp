@@ -14,12 +14,10 @@ needs. The agreed design is [`.agents/plan.md`](.agents/plan.md). Read it
 before adding a feature: it has the data model, the GraphQL surface, the MCP
 tools and the build order.
 
-**Where the build is:** step 5 of the plan (MCP, the goal). Sign-in, API keys,
+**Where the build is:** step 6 of the plan (tags). Sign-in, API keys,
 health, settings, buckets, documents (upload, scan, preview, rename, delete, the
-bucket tree), share links (with re-keying), `app_settings` and the per-bucket
-MCP endpoints exist. Tags do not yet. They are under
-[Planned](#planned--see-agentsplanmd) below. Don't write code or docs as if
-they exist.
+bucket tree), share links (with re-keying), `app_settings`, the per-bucket
+MCP endpoints and tags exist. Step 7 (ship) is next.
 
 ## Skills to load
 
@@ -59,7 +57,7 @@ Packages: `@cubicecho/s3-artifacts-mcp-app`, `@cubicecho/s3-artifacts-mcp-server
 
 ## Project structure
 
-As of step 5. The folders later steps add are in the plan's "Layout".
+As of step 6.
 
 ```
 s3-artifacts-mcp/
@@ -75,15 +73,16 @@ s3-artifacts-mcp/
 │       │   └── domain/      # bucket-tree, bucket-sidebar, upload-panel, upload-dialog, document-preview-card, document-details-card,
 │       │                    #   rename-document-dialog, bucket-settings, bucket-form-dialog, bucket-secret-dialog, bucket-test-report, sso-pairing, api-key-settings,
 │       │                    #   document-share-links, share-link-dialog, share-link-list, share-link-settings, link-expiry-field, general-settings, mcp-settings,
+│       │                    #   document-table, document-filter-bar, document-tags-card, tag-chip, tag-picker, tag-form-dialog, bulk-tag-dialog,
 │       │                    #   and the stories' mock servers (*-fixtures.ts)
-│       ├── routes/          # login, verify, sso, settings (Buckets, Share links, MCP, General, Auth, API keys, Appearance), documents (/), document (/documents/:id)
-│       ├── lib/             # apollo, auth, library (the tree's and list's one query), upload, upload-limit, share-links, content-url, mcp, settings-tabs, page, cn()
+│       ├── routes/          # login, verify, sso, settings (Buckets, Share links, MCP, General, Auth, API keys, Appearance), documents (/), document (/documents/:id), tags (/tags)
+│       ├── lib/             # apollo, auth, library (the tree's and list's one query), document-filters, tags, upload, upload-limit, share-links, content-url, mcp, settings-tabs, page, cn()
 │       └── main.tsx         # Providers + the router
 ├── server/                  # GraphQL API (port 3005)
 │   ├── __generated__/       # Generated SDL (not committed)
 │   └── src/
 │       ├── index.ts         # Boot only: preflight, wait for Postgres, migrate, createApp, listen, stop on a signal
-│       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env, secrets
+│       ├── core/            # config, defaults, wire, errors, postgres-errors, validation, context, preflight, limiter, preload-env, secrets
 │       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs), content (/api routes); mounts mcp/
 │       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema, docs, parent-id, naming
 │       ├── auth/            # better-auth (with the owner gate), auth-host, admin, rate-limit, resolvers
@@ -93,13 +92,14 @@ s3-artifacts-mcp/
 │       ├── storage/         # storage (the Storage interface), s3 (one bucket), registry (all of them)
 │       ├── documents/       # keys, create, scan, rekey, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
 │       ├── share-links/     # create (signing), expiry, state, sdl, resolvers
+│       ├── tags/            # names (the name rules, shared with MCP), tagging (links, by id and by name), sdl, resolvers
 │       ├── app-settings/    # app-settings (read, bounds, update), sdl, resolvers
 │       ├── mcp/             # endpoint (/mcp/b/:slug, the key), access (the bucket scope), tools, uploads, content-types
 │       └── __tests__/       # Server tests, in the same folders as src; helpers.ts at the root
 ├── db/
 │   ├── drizzle/             # Generated migrations (committed)
 │   └── src/
-│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets, documents, share-links, app-settings
+│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets, documents, share-links, app-settings, tags, document-tags
 │       ├── schema.ts        # Every model
 │       ├── relations.ts     # defineRelations config (drives the GraphQL schema)
 │       ├── defaults.ts      # DATABASE_DEFAULTS, APP_SETTINGS_DEFAULTS (the columns' defaults)
@@ -477,6 +477,16 @@ easy to break:
   the presigner leaves them unsigned unless told. `complete_upload` heads the
   object, refuses (and removes) a size mismatch, hashes it once and calls
   `markReady`; on a ready document it answers it again.
+- **Tags are named, not picked.** `upload_document` and `create_upload` take
+  `tags`, and `tag_document` (a write tool) `add` and `remove`, all by name,
+  matched ignoring case; a name the owner has no tag for is made
+  (`ensureTagsNamed`, which finds rather than refuses a name made alongside). The
+  names are checked before anything is stored. `list_documents` filters by
+  `tags` with `match: 'any' | 'all'`, `list_tags` answers the tags on a
+  document in this bucket and the ones on no document at all, with how many ready
+  documents here carry each; a tag used only in other buckets is left out, so an
+  endpoint never learns about a bucket it cannot see, and every document a tool answers carries `tags`. The tag
+  reads are in `access.ts`, under `inBucket`, like every other.
 - **Text uploaded inline is stored as UTF-8**, so a text type with no charset
   gets `; charset=utf-8` (`mcp/content-types.ts`).
 - **Links come from `createShareLink`** with `ShareLinkCreator.Mcp`; a `share`
@@ -488,8 +498,8 @@ easy to break:
   `uploadUrlTtlMinutes` below `UPLOAD_DEFAULTS.pendingTtlMinutes`, so nothing
   reaches a key after its row was swept. A test checks both.
 - **The acceptance test** (`__tests__/mcp/mcp.integration.test.ts`) is the goal
-  against a real RustFS: upload with a share, open the link with no
-  credentials, a binary file through `create_upload`, a plain `fetch` PUT and
+  against a real RustFS: upload with tags and a share, list by those tags, open
+  the link with no credentials, a binary file through `create_upload`, a plain `fetch` PUT and
   `complete_upload`, then a re-key and a 404. It is skipped unless
   `S3AM_IT_ENDPOINT` is set, and deletes every object it makes.
 - Settings → MCP (`mcp-settings`) shows each bucket's switches, its endpoint
@@ -497,6 +507,46 @@ easy to break:
   hand) and a `claude mcp add --transport http <slug> <url> --header "x-api-key:
   …"` command. `--header` is variadic, so it stays after the name and URL. Vite
   proxies `/mcp` in dev.
+
+**Tags are the owner's (D8), kept in Postgres, never as S3 object tags (D11).**
+`tags` holds the name and a `#rrggbb` colour; `document_tags` links a tag to a
+document and carries the owner's `user_id` like every table, so both have a
+`scope` entry. Rules that are easy to break:
+
+- **The name rules live in `tags/names.ts`, for GraphQL and MCP alike.** A name
+  is trimmed, at most `TAG_DEFAULTS.nameMaxLength`, and unique to its owner
+  ignoring case: the unique index is `(user_id, lower(name))`. A taken name is
+  `CONFLICT`, from the check or, when two saves race, from the index
+  (`isUniqueViolation`, `core/postgres-errors.ts`). A tag may change the case of
+  its own name. A tag made with no colour gets one of `TAG_DEFAULTS.palette`,
+  picked by its name. Don't check a name anywhere else.
+- **Links go with either side.** Both foreign keys cascade: deleting a tag
+  takes it off every document (the confirm says how many), and deleting a
+  document, or forgetting a bucket's, takes its links.
+- **Another user's tag or document is `NOT_FOUND`, and nothing changes.**
+  `setDocumentTags` and `bulkTagDocuments` check every id first
+  (`ownTagIds`, `ownDocumentIds` in `tags/tagging.ts`) and write in one
+  transaction. A tag in both `add` and `remove` is `BAD_USER_INPUT`.
+- **Counts are generated.** `Tag.documentsAggregate(where: { status: { eq: ready } })`
+  is how many documents carry a tag, through the `.through()` relation.
+  drizzle-graphql 16 builds broken SQL for a relation *filter* through it
+  (`documents(where: { tags: … })`), so nothing filters that way: the documents
+  list filters the tags the `Library` query already has.
+- **The documents list's filters are the URL** (`lib/document-filters.ts`):
+  `?bucket=<slug>&tags=<id>,<id>&match=all&q=<title>&type=<content type>`. A
+  filter back at "everything" leaves the URL, and an id or slug that names
+  nothing filters nothing. A tag's row on `/tags` links to the list filtered to
+  it (`tagDocumentsPath`).
+- **Every tag edit is a form in a dialog** (`tag-form-dialog`); the picker
+  (`tag-picker`, a `Combobox multiple`) is the only place a tag is made without
+  one, by typing a name no tag has. A document's picker shows a pick at once and
+  saves one change after another, so a second pick never undoes the first.
+- **Colours go through the colour helpers.** A chip is `Badge` with the tag's
+  colour and `readableTextColor` for its ink; a dot is `ColorDot`. Never a
+  palette class.
+- A tagging mutation answers the documents with their `tags { ...TagFields }`,
+  which updates them in the cache everywhere; it refetches `TAG_QUERIES` for the
+  counts. A tag renamed, recoloured or deleted refetches `LIBRARY_QUERIES` too.
 
 **The content routes are same-origin and must stay safe as such.**
 `/api/documents/:id/content` is served from the app's own origin, so an
@@ -541,12 +591,8 @@ too.
 
 ## Planned — see .agents/plan.md
 
-None of this exists yet. When you build a step, move its rules up into "Rules
-that carry weight" and the structure tree, and delete them here.
-
-- **Tags (step 6).** The owner's, unique by name ignoring case, kept in Postgres
-  (not as S3 object tags). Then MCP gains `list_tags`, `tag_document` and a
-  `tags` argument on `list_documents` and the upload tools.
+Step 7 (ship) is what is left. When you build a step, move its rules up into
+"Rules that carry weight" and the structure tree.
 
 ## Stories are the frontend tests
 
@@ -557,9 +603,12 @@ The rules are in `cubicecho_frontend` → `testing.md`. What is particular here:
   has its own Storybook.
 - **Mock servers live in `components/domain/*-fixtures.ts`**: `bucketServer`
   (its `mcpCalls` records `setBucketMcp`),
-  `documentServer`, `shareLinkServer`, and `sharingServer` (documents and
-  links over one list, so a re-key moves the document the page shows).
-  `mergeResolvers` lays one over another.
+  `documentServer`, `shareLinkServer`, `sharingServer` (documents and
+  links over one list, so a re-key moves the document the page shows),
+  `tagServer` (tags over another server's documents, whose `tags` are its own
+  objects, so a rename shows on every document) and `taggingServer` (documents
+  and tags together). `mergeResolvers` lays one over another. Every document
+  fixture has `tags`, since `Library` asks for them.
 - **There are two ways to give a story a server**, under
   `parameters.apolloClient` (`app/.storybook/graphql.tsx`). `mocks` is Apollo's
   `MockedProvider`, for when the request is the subject. `resolvers` is a
@@ -577,6 +626,10 @@ The rules are in `cubicecho_frontend` → `testing.md`. What is particular here:
   `aria-hidden` on the rest of the page for the stories after it: close it at
   the end. After picking from a select, wait for its options to go before
   querying the page by role, for the same reason.
+- **A dialog may still be fading in** on CI's slower runner, so a visibility
+  check right after opening one goes in `waitFor`. A dialog story that ends
+  with it open renders it through a wrapper that unmounts it on `onClose`, and
+  presses Cancel (and Discard) at the end.
 
 ## Code style
 

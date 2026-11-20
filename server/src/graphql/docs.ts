@@ -12,6 +12,8 @@ const TABLE_DOCS: Readonly<Record<string, string>> = Object.freeze({
   shareLinks:
     'A presigned URL for a document, signed on its bucket’s public endpoint. It works until it expires or the document is re-keyed, whatever this list says.',
   appSettings: 'What the owner set in Settings → General. Each value is checked against `appSettingsLimits`.',
+  tags: 'One of the owner’s tags, which is how documents are organised. A name is unique to its owner, ignoring case.',
+  documentTags: 'A tag on a document. Deleting the tag or the document removes it.',
 });
 
 /** What each generated column field holds. */
@@ -49,6 +51,14 @@ const COLUMN_DOCS: Readonly<Record<string, Readonly<Record<string, string>>>> = 
     objectKey: 'The key the link was signed for. Once the document’s own key differs, the link is revoked.',
     expiresAt: 'When the bucket stops accepting the link: at most 7 days after it was made.',
     createdBy: '`owner` for a link made in the app, `mcp` for one an MCP client made.',
+  }),
+  tags: Object.freeze({
+    name: 'What the tag is called: trimmed, and unique to its owner ignoring case.',
+    color: 'The tag’s colour, as `#rrggbb`.',
+  }),
+  documentTags: Object.freeze({
+    documentId: 'The document the tag is on.',
+    tagId: 'The tag.',
   }),
   appSettings: Object.freeze({
     maxUploadBytes: 'The largest file an upload may declare, in bytes.',

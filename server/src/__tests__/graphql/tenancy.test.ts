@@ -20,7 +20,15 @@ const tableKeys = Object.entries(dbSchema)
 
 describe('tenancy configuration', () => {
   it('finds the tables', () => {
-    expect(tableKeys.sort()).toEqual(['appSettings', 'buckets', 'documents', 'shareLinks', 'users']);
+    expect(tableKeys.sort()).toEqual([
+      'appSettings',
+      'buckets',
+      'documentTags',
+      'documents',
+      'shareLinks',
+      'tags',
+      'users',
+    ]);
   });
 
   it.each(tableKeys)('scopes %s to the caller', (key) => {
@@ -51,6 +59,7 @@ describe('tenancy at runtime', () => {
   let bobBucket: string;
   let bobDocument: string;
   let bobLink: string;
+  let bobTag: string;
 
   beforeAll(async () => {
     db = await createTestDb();
@@ -98,6 +107,12 @@ describe('tenancy at runtime', () => {
       })
       .returning({ id: dbSchema.shareLinks.id });
     bobLink = link.id;
+    const [tag] = await db
+      .insert(dbSchema.tags)
+      .values({ userId: bob, name: 'Bob’s', color: '#22c55e' })
+      .returning({ id: dbSchema.tags.id });
+    bobTag = tag.id;
+    await db.insert(dbSchema.documentTags).values({ documentId: bobDocument, tagId: bobTag, userId: bob });
   });
 
   afterAll(() => closeTestDb(db));
@@ -155,6 +170,19 @@ describe('tenancy at runtime', () => {
     expect(byDocument.shareLinks).toEqual([]);
     const asBob = await createClient(db, bob).expectOk('{ documents { shareLinks { id } } }');
     expect(asBob.documents).toEqual([{ shareLinks: [{ id: bobLink }] }]);
+  });
+
+  it('hides another user’s tags and their links, through a filter, a document and a count alike', async () => {
+    const alicesView = createClient(db, alice);
+    expect(await alicesView.expectOk('{ tags { id } documentTags { tagId } }')).toEqual({ tags: [], documentTags: [] });
+    const byId = await alicesView.expectOk('query ($id: UUID!) { tag(where: { id: { eq: $id } }) { id } }', {
+      id: bobTag,
+    });
+    expect(byId.tag).toBeNull();
+    const asBob = await createClient(db, bob).expectOk(
+      '{ documents { tags { id } } tags { documentsAggregate { count } } }',
+    );
+    expect(asBob).toEqual({ documents: [{ tags: [{ id: bobTag }] }], tags: [{ documentsAggregate: { count: 1 } }] });
   });
 
   it('keeps a share link’s sealed URL out of the schema', async () => {

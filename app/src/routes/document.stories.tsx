@@ -10,6 +10,15 @@ import {
   PDF_DOCUMENT,
 } from '@/components/domain/document-fixtures';
 import { mergeResolvers, shareLinkFixture, shareLinkServer } from '@/components/domain/share-link-fixtures';
+import {
+  DRAFT_TAG,
+  FINANCE_TAG,
+  MIXED_TAGS,
+  Q4_TAG,
+  type TagFixture,
+  type TagLinks,
+  tagServer,
+} from '@/components/domain/tag-fixtures';
 import { bucketDocumentsPath, documentPath, ROUTES } from '@/lib/routes';
 import { DocumentRoute } from './document';
 
@@ -20,6 +29,14 @@ import { DocumentRoute } from './document';
  */
 
 type ServerOptions = Parameters<typeof documentServer>[2];
+type TagOptions = Parameters<typeof tagServer>[2];
+
+/** The tags a story's server holds, which documents carry which, and how the tag half answers. */
+interface Tagging {
+  tags?: readonly TagFixture[];
+  links?: TagLinks;
+  options?: TagOptions;
+}
 
 /**
  * A story's server, at a document's page.
@@ -27,10 +44,20 @@ type ServerOptions = Parameters<typeof documentServer>[2];
  * @param path - Where the story opens.
  * @param documents - The documents the server holds.
  * @param options - How its mutations answer.
+ * @param tagging - The tags, and who carries them.
  * @returns The story's parameters and the server to inspect in `play`.
  */
-function at(path: string, documents: readonly DocumentFixture[] = MIXED_DOCUMENTS, options: ServerOptions = {}) {
+function at(
+  path: string,
+  documents: readonly DocumentFixture[] = MIXED_DOCUMENTS,
+  options: ServerOptions = {},
+  tagging: Tagging = {},
+) {
   const server = documentServer([MINIO_BUCKET, S3_BUCKET], documents, options);
+  for (const document of server.documents) {
+    document.tags = [...(tagging.links?.[document.id] ?? [])];
+  }
+  const tags = tagServer(server.documents, tagging.tags ?? MIXED_TAGS, tagging.options);
   // The PDF has one link, so the share card has something to show and a re-key something to revoke.
   const pdf = server.documents.find((document) => document.id === PDF_DOCUMENT.id);
   const sharing = shareLinkServer(
@@ -40,8 +67,9 @@ function at(path: string, documents: readonly DocumentFixture[] = MIXED_DOCUMENT
   return {
     server,
     sharing,
+    tags,
     parameters: {
-      apolloClient: { resolvers: mergeResolvers(server.resolvers, sharing.resolvers) },
+      apolloClient: { resolvers: mergeResolvers(server.resolvers, sharing.resolvers, tags.resolvers) },
       router: { initialEntries: [path] },
     },
   };
@@ -271,5 +299,124 @@ export const Narrow: Story = {
     await expect(await canvas.findByRole('button', { name: 'Delete' })).toBeVisible();
     await expect(canvas.getByText(PDF_DOCUMENT.sha256 ?? '')).toBeVisible();
     await expect(canvasElement.scrollWidth).toBeLessThanOrEqual(canvasElement.clientWidth);
+  },
+};
+
+/**
+ * The page's tags card.
+ *
+ * @param canvasElement - The story's root.
+ * @returns Queries within it.
+ */
+async function tagsCard(canvasElement: HTMLElement) {
+  const heading = await within(canvasElement).findByRole('heading', { level: 2, name: 'Tags' });
+  const card = heading.closest('[data-slot="card-layout"]');
+  if (card instanceof HTMLElement === false) {
+    throw new Error('The tags are not in a card');
+  }
+  return within(card);
+}
+
+/**
+ * Opens the tag picker's menu.
+ *
+ * @param canvasElement - The story's root.
+ * @returns The menu, in the page's portal.
+ */
+async function openPicker(canvasElement: HTMLElement) {
+  const card = await tagsCard(canvasElement);
+  const trigger = card.getByRole('combobox', { name: `Tags of ${PDF_DOCUMENT.title}` });
+  await waitFor(() => expect(trigger).toBeEnabled());
+  await userEvent.click(trigger);
+  return within(await within(canvasElement.ownerDocument.body).findByRole('dialog', { name: 'Choose tags' }));
+}
+
+/** Closes the picker's menu, so it leaves nothing hidden from the stories after it. */
+async function closePicker(canvasElement: HTMLElement) {
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() =>
+    expect(within(canvasElement.ownerDocument.body).queryByRole('dialog', { name: 'Choose tags' })).toBeNull(),
+  );
+}
+
+const tagged = at(documentPath(PDF_DOCUMENT.id), MIXED_DOCUMENTS, {}, { links: { [PDF_DOCUMENT.id]: [FINANCE_TAG] } });
+/** The document's tags are chips on the picker, and picking another saves the whole set at once. */
+export const Tags: Story = {
+  parameters: tagged.parameters,
+  play: async ({ canvasElement }) => {
+    const card = await tagsCard(canvasElement);
+    const trigger = card.getByRole('combobox', { name: `Tags of ${PDF_DOCUMENT.title}` });
+    await waitFor(() => expect(trigger).toHaveTextContent(FINANCE_TAG.name));
+    const menu = await openPicker(canvasElement);
+    await userEvent.click(menu.getByRole('option', { name: Q4_TAG.name }));
+    await waitFor(() =>
+      expect(tagged.tags.calls.setDocumentTags).toContainEqual({
+        documentId: PDF_DOCUMENT.id,
+        tagIds: [FINANCE_TAG.id, Q4_TAG.id],
+      }),
+    );
+    await closePicker(canvasElement);
+    await waitFor(() => expect(trigger).toHaveTextContent(Q4_TAG.name));
+    await expect(card.getByRole('link', { name: 'Manage tags' })).toHaveAttribute('href', ROUTES.tags);
+  },
+};
+
+const making = at(documentPath(PDF_DOCUMENT.id), MIXED_DOCUMENTS, {}, { links: { [PDF_DOCUMENT.id]: [DRAFT_TAG] } });
+/** A name no tag has makes the tag and puts it on, in one go. */
+export const MakesATagInline: Story = {
+  parameters: making.parameters,
+  play: async ({ canvasElement }) => {
+    const menu = await openPicker(canvasElement);
+    await userEvent.type(menu.getByRole('combobox', { name: 'Find a tag' }), 'Contracts');
+    await userEvent.click(await menu.findByRole('option', { name: /Make the tag “Contracts”/ }));
+    await waitFor(() => expect(making.tags.tags.map((tag) => tag.name)).toContain('Contracts'));
+    const made = making.tags.tags.find((tag) => tag.name === 'Contracts');
+    await waitFor(() =>
+      expect(making.tags.calls.setDocumentTags).toContainEqual({
+        documentId: PDF_DOCUMENT.id,
+        tagIds: [DRAFT_TAG.id, made?.id],
+      }),
+    );
+    await closePicker(canvasElement);
+    const card = await tagsCard(canvasElement);
+    await waitFor(() =>
+      expect(card.getByRole('combobox', { name: `Tags of ${PDF_DOCUMENT.title}` })).toHaveTextContent('Contracts'),
+    );
+  },
+};
+
+/** The server refuses a change: the card says why, and the picker goes back to the tags the document has. */
+export const TaggingRefused: Story = {
+  parameters: at(
+    documentPath(PDF_DOCUMENT.id),
+    MIXED_DOCUMENTS,
+    {},
+    { links: { [PDF_DOCUMENT.id]: [FINANCE_TAG] }, options: { tagRefusal: 'Tag not found.' } },
+  ).parameters,
+  play: async ({ canvasElement }) => {
+    const menu = await openPicker(canvasElement);
+    await userEvent.click(menu.getByRole('option', { name: Q4_TAG.name }));
+    await closePicker(canvasElement);
+    const card = await tagsCard(canvasElement);
+    await expect(await card.findByText('Could not change the tags')).toBeInTheDocument();
+    const trigger = card.getByRole('combobox', { name: `Tags of ${PDF_DOCUMENT.title}` });
+    await waitFor(() => expect(trigger).not.toHaveTextContent(Q4_TAG.name));
+    await expect(trigger).toHaveTextContent(FINANCE_TAG.name);
+  },
+};
+
+/** The tags cannot be read: the card says so, with a retry, and the rest of the page stands. */
+export const TagsFailed: Story = {
+  parameters: at(
+    documentPath(PDF_DOCUMENT.id),
+    MIXED_DOCUMENTS,
+    {},
+    { options: { failTags: 'The database is not answering' } },
+  ).parameters,
+  play: async ({ canvasElement }) => {
+    const card = await tagsCard(canvasElement);
+    await expect(await card.findByText(/Could not load your tags/)).toBeInTheDocument();
+    await expect(card.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+    await expect(within(canvasElement).getByRole('heading', { level: 2, name: 'Details' })).toBeInTheDocument();
   },
 };

@@ -11,12 +11,22 @@ import { z } from 'zod';
 import { describeBytes } from '../app-settings/app-settings.ts';
 import { version } from '../core/config.ts';
 import type { Context } from '../core/context.ts';
-import { DOCUMENT_DEFAULTS, MCP_DEFAULTS, SHARE_LINK_DEFAULTS } from '../core/defaults.ts';
+import { DOCUMENT_DEFAULTS, MCP_DEFAULTS, SHARE_LINK_DEFAULTS, TAG_DEFAULTS } from '../core/defaults.ts';
 import { errorMessage } from '../core/errors.ts';
 import { bucketStorageFor } from '../documents/bucket-storage.ts';
 import { type CreatedShareLink, createShareLink } from '../share-links/create.ts';
 import { expiryHoursSchema } from '../share-links/expiry.ts';
-import { currentBucket, listBucketDocuments, readyBucketDocument, requireWritable } from './access.ts';
+import { parseTagNames } from '../tags/names.ts';
+import { tagByName } from '../tags/tagging.ts';
+import {
+  bucketDocumentTags,
+  bucketTagCounts,
+  currentBucket,
+  listBucketDocuments,
+  readyBucketDocument,
+  requireWritable,
+  TagMatch,
+} from './access.ts';
 import { isInlineBinary, isTextLike } from './content-types.ts';
 import { completeUpload, FILE_PLACEHOLDER, startUpload, uploadText } from './uploads.ts';
 
@@ -28,9 +38,15 @@ import { completeUpload, FILE_PLACEHOLDER, startUpload, uploadText } from './upl
 /** The name the MCP server gives for itself. */
 export const MCP_SERVER_NAME = 's3-artifacts-mcp';
 /** The tools every endpoint offers. */
-export const READ_TOOLS = ['list_documents', 'get_document'] as const;
+export const READ_TOOLS = ['list_documents', 'get_document', 'list_tags'] as const;
 /** The tools a writable bucket's endpoint offers as well. */
-export const WRITE_TOOLS = ['upload_document', 'create_upload', 'complete_upload', 'create_share_link'] as const;
+export const WRITE_TOOLS = [
+  'upload_document',
+  'create_upload',
+  'complete_upload',
+  'create_share_link',
+  'tag_document',
+] as const;
 /** Spaces a JSON result is indented by, so an agent and a person can both read it. */
 const JSON_INDENT = 2;
 /** Where an embedded resource says it came from. */
@@ -39,6 +55,7 @@ const RESOURCE_SCHEME = 's3a:';
 const { pageSize, inlineTextBytes, inlineBinaryBytes, inlineUploadBytes, uploadUrlTtlMinutes } = MCP_DEFAULTS;
 const { maxExpiryHours, labelMaxLength } = SHARE_LINK_DEFAULTS;
 const { filenameMaxLength, contentTypeMaxLength } = DOCUMENT_DEFAULTS;
+const { nameMaxLength, maxTagsPerCall } = TAG_DEFAULTS;
 
 /** What a share link is, for a tool description. */
 const LINK_NATURE = 'The link opens straight from the bucket with no sign-in, and cannot be revoked before it expires.';
@@ -75,6 +92,14 @@ const shareSchema = z
   })
   .describe("Also make a share link for the document. Fields left out take the owner's defaults");
 
+/** Tags an agent names. Names are the owner's, matched ignoring case. */
+const tagNamesSchema = z.array(z.string().max(nameMaxLength)).max(maxTagsPerCall);
+
+/** Tags to put on a new document. A name the owner has no tag for makes one. */
+const newTagsSchema = tagNamesSchema
+  .optional()
+  .describe('Tags to put on it, by name, ignoring case. One that does not exist yet is made; list_tags names them');
+
 /** What a share link a tool made looks like to the agent. */
 type ShareLinkView = Record<string, unknown>;
 
@@ -82,9 +107,10 @@ type ShareLinkView = Record<string, unknown>;
  * A document as a tool shows it.
  *
  * @param document - The row.
- * @returns Its id, names, type, size, hash and when it was added.
+ * @param tags - The names of its tags.
+ * @returns Its id, names, type, size, hash, when it was added and its tags.
  */
-function documentView(document: Document): Record<string, unknown> {
+function documentView(document: Document, tags: readonly string[]): Record<string, unknown> {
   return {
     id: document.id,
     title: document.title,
@@ -93,6 +119,7 @@ function documentView(document: Document): Record<string, unknown> {
     size: document.size,
     sha256: document.sha256,
     createdAt: document.createdAt.toISOString(),
+    tags,
   };
 }
 
@@ -134,13 +161,13 @@ async function run(body: () => Promise<ToolAnswer>): Promise<CallToolResult> {
 function instructionsFor(bucket: Bucket): string {
   const reach = `Files in the owner's bucket "${bucket.name}". Only this bucket is reachable here.`;
   if (bucket.mcpWritable === false) {
-    return `${reach} It is shared read-only: list_documents and get_document read it.`;
+    return `${reach} It is shared read-only: list_documents, get_document and list_tags read it.`;
   }
   return (
     `${reach} To hand the user a file you made, store it here and give them a share link. ` +
     'Text you wrote yourself (markdown, HTML, CSV, JSON, code): upload_document with `share`. ' +
     'A file on disk (PDF, image, archive): create_upload, run the curl command it gives, then complete_upload with ' +
-    `\`share\`. ${HAND_OVER}`
+    `\`share\`. Either upload takes \`tags\`, by name, to file it; list_tags names the ones in use. ${HAND_OVER}`
   );
 }
 
@@ -164,6 +191,17 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
     requireWritable(now);
     return now;
   };
+  /** A document as a tool shows it, with its tags as they are now. */
+  const view = async (now: Bucket, document: Document): Promise<Record<string, unknown>> => {
+    const tags = await bucketDocumentTags(ctx.db, now, [document.id]);
+    return documentView(document, tags.get(document.id) ?? []);
+  };
+  /** Puts the tags an upload named on its new document. */
+  const tagNew = async (document: Document, names: readonly string[]): Promise<void> => {
+    if (names.length > 0) {
+      await tagByName(ctx.db, userId, document.id, { add: names });
+    }
+  };
   /** Makes the share link an upload asked for, if it asked for one. */
   const shareIfAsked = async (
     document: Document,
@@ -180,7 +218,7 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
     'list_documents',
     {
       title: 'List documents',
-      description: `The documents in this bucket, newest first, ${pageSize} at most a call: id, title, filename, type, size and when each was added. When there are more, \`nextCursor\` is set: pass it as \`cursor\` for the next page.`,
+      description: `The documents in this bucket, newest first, ${pageSize} at most a call: id, title, filename, type, size, when each was added and its tags. When there are more, \`nextCursor\` is set: pass it as \`cursor\` for the next page.`,
       inputSchema: {
         title: z.string().trim().min(1).optional().describe('Only titles containing this, ignoring case'),
         contentType: z
@@ -189,6 +227,13 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
           .min(1)
           .optional()
           .describe('Only types starting with this, ignoring case: `image/` for every image, `application/pdf`'),
+        tags: tagNamesSchema
+          .optional()
+          .describe('Only documents with these tags, by name, ignoring case. `match` says whether any or all'),
+        match: z
+          .enum([TagMatch.Any, TagMatch.All])
+          .default(TagMatch.Any)
+          .describe('`any` (the default): a document with at least one of `tags`. `all`: only one with every one'),
         limit: z.number().int().min(1).max(pageSize).default(pageSize),
         cursor: z.string().optional().describe('`nextCursor` from the page before'),
       },
@@ -196,8 +241,15 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
     },
     (args) =>
       run(async () => {
-        const page = await listBucketDocuments(ctx.db, await reread(), args);
-        return { data: { documents: page.documents.map(documentView), nextCursor: page.nextCursor } };
+        const now = await reread();
+        const page = await listBucketDocuments(ctx.db, now, { ...args, tags: parseTagNames(args.tags ?? []) });
+        const tags = await bucketDocumentTags(
+          ctx.db,
+          now,
+          page.documents.map((document) => document.id),
+        );
+        const listed = page.documents.map((document) => documentView(document, tags.get(document.id) ?? []));
+        return { data: { documents: listed, nextCursor: page.nextCursor } };
       }),
   );
 
@@ -213,7 +265,7 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
       run(async () => {
         const now = await reread();
         const document = await readyBucketDocument(ctx.db, now, id);
-        const details = documentView(document);
+        const details = await view(now, document);
         const isText = isTextLike(document.contentType) && document.size <= inlineTextBytes;
         const isBinary = isInlineBinary(document.contentType) && document.size <= inlineBinaryBytes;
         if (isText === false && isBinary === false) {
@@ -227,6 +279,21 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
         const uri = `${RESOURCE_SCHEME}//${now.slug}/${document.id}`;
         const resource = { uri, mimeType: document.contentType, blob: bytes.toString('base64') };
         return { data: { document: details }, more: [{ type: 'resource', resource }] };
+      }),
+  );
+
+  server.registerTool(
+    'list_tags',
+    {
+      title: 'List tags',
+      description:
+        "The tags in use in this bucket, and the owner's unused ones, by name, with each one's colour and how many documents in this bucket carry it. A name matches ignoring case.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    () =>
+      run(async () => {
+        return { data: { tags: await bucketTagCounts(ctx.db, await reread()) } };
       }),
   );
 
@@ -246,14 +313,18 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
           .describe('What the file is called, with its extension: `report.md`'),
         contentType: z.string().max(contentTypeMaxLength).describe('Its MIME type: `text/markdown`, `text/html`'),
         text: z.string().describe('The whole file'),
+        tags: newTagsSchema,
         share: shareSchema.optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    ({ share, ...upload }) =>
+    ({ share, tags = [], ...upload }) =>
       run(async () => {
-        const document = await uploadText(ctx, await writable(), upload);
-        return { data: { document: documentView(document), ...(await shareIfAsked(document, share)) } };
+        const names = parseTagNames(tags);
+        const now = await writable();
+        const document = await uploadText(ctx, now, upload);
+        await tagNew(document, names);
+        return { data: { document: await view(now, document), ...(await shareIfAsked(document, share)) } };
       }),
   );
 
@@ -269,12 +340,15 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
           .describe('What the file is called, with its extension: `chart.png`'),
         contentType: z.string().max(contentTypeMaxLength).describe('Its MIME type: `application/pdf`, `image/png`'),
         size: z.number().int().positive().describe("The file's exact length in bytes"),
+        tags: newTagsSchema,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    (upload) =>
+    ({ tags = [], ...upload }) =>
       run(async () => {
+        const names = parseTagNames(tags);
         const started = await startUpload(ctx, await writable(), upload);
+        await tagNew(started.document, names);
         return {
           data: {
             documentId: started.document.id,
@@ -300,8 +374,9 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
     },
     ({ documentId, share }) =>
       run(async () => {
-        const document = await completeUpload(ctx, await writable(), documentId);
-        return { data: { document: documentView(document), ...(await shareIfAsked(document, share)) } };
+        const now = await writable();
+        const document = await completeUpload(ctx, now, documentId);
+        return { data: { document: await view(now, document), ...(await shareIfAsked(document, share)) } };
       }),
   );
 
@@ -315,8 +390,32 @@ export function createMcpServer({ ctx, userId, bucket }: McpDeps): McpServer {
     },
     ({ id, ...share }) =>
       run(async () => {
-        const document = await readyBucketDocument(ctx.db, await writable(), id);
-        return { data: { document: documentView(document), ...(await shareIfAsked(document, share)) } };
+        const now = await writable();
+        const document = await readyBucketDocument(ctx.db, now, id);
+        return { data: { document: await view(now, document), ...(await shareIfAsked(document, share)) } };
+      }),
+  );
+
+  server.registerTool(
+    'tag_document',
+    {
+      title: 'Tag a document',
+      description:
+        'Puts tags on a document in this bucket and takes tags off it, by name, ignoring case. A name in `add` the owner has no tag for makes one; a name in `remove` that is not on it is no matter. Answers the document with its tags.',
+      inputSchema: {
+        id: z.string().describe('The document id, from list_documents'),
+        add: tagNamesSchema.optional().describe('Tags to put on it'),
+        remove: tagNamesSchema.optional().describe('Tags to take off it'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    ({ id, add = [], remove = [] }) =>
+      run(async () => {
+        const names = { add: parseTagNames(add), remove: parseTagNames(remove) };
+        const now = await writable();
+        const document = await readyBucketDocument(ctx.db, now, id);
+        await tagByName(ctx.db, userId, document.id, names);
+        return { data: { document: await view(now, document) } };
       }),
   );
 

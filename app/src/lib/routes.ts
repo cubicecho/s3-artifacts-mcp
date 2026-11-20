@@ -9,6 +9,8 @@ export const ROUTES = Object.freeze({
   documents: '/',
   /** One document. Build a link to it with {@link documentPath}. */
   document: '/documents/:id',
+  /** The owner's tags: made, renamed, recoloured and deleted here. */
+  tags: '/tags',
   settings: '/settings',
   login: '/login',
   /** Where a magic link lands, carrying its token in the query string. */
@@ -38,4 +40,17 @@ export function documentPath(id: string): string {
  */
 export function bucketDocumentsPath(slug: string): string {
   return `${ROUTES.documents}?${new URLSearchParams({ [BUCKET_FILTER_PARAM]: slug })}`;
+}
+
+/** The query-string key the documents page filters by tags: their ids, comma-separated. */
+export const TAGS_FILTER_PARAM = 'tags';
+
+/**
+ * The documents page, filtered to one tag.
+ *
+ * @param tagId - The tag's id.
+ * @returns The path, with the tag in the query string.
+ */
+export function tagDocumentsPath(tagId: string): string {
+  return `${ROUTES.documents}?${new URLSearchParams({ [TAGS_FILTER_PARAM]: tagId })}`;
 }

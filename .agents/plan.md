@@ -191,6 +191,7 @@ tenancy test enforces it).
 
 **`document_tags`**
 - `document_id`, `tag_id`: PK on the pair, both `ON DELETE CASCADE`
+- `user_id` (`ON DELETE CASCADE`), added in step 6: every table carries its owner and has a `scope` entry, which the tenancy test holds to
 
 **`share_links`**
 - `id`, `user_id`, `document_id` (`ON DELETE CASCADE`)
@@ -281,6 +282,16 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
   - bulk add or remove on a multi-select
 - **Filters on the documents list:** tags (any or all), bucket, title text and type. The filter lives in the URL.
 - **Writes:** hand-written mutations `setDocumentTags(documentId, tagIds)` and `bulkTagDocuments(documentIds, add, remove)`. The name check ignores case and is shared with MCP.
+- **Decided in step 6:**
+  - A name is trimmed, at most `TAG_DEFAULTS.nameMaxLength` (50) characters, with no control characters. A taken name, in any case, is CONFLICT, from the check or from the unique index when two saves race. A tag may change the case of its own name.
+  - A colour is `#rrggbb` (`#rgb` is written out). A tag made without one, from MCP or the picker, gets one of `TAG_DEFAULTS.palette`, picked by its name.
+  - `updateTag(id, name?, color?)` takes either or both. `bulkTagDocuments` takes at most `TAG_DEFAULTS.bulkMaxDocuments` (1000) documents, and any tag list at most `maxTagsPerCall` (50); a tag in both `add` and `remove` is BAD_USER_INPUT. Every id is checked before anything is written, and the writes are one transaction.
+  - A tag's count is the generated `Tag.documentsAggregate(where: { status: { eq: ready } })`. There is no hand-written count field.
+  - The documents list filters on the client, over the tags the `Library` query already carries, like the bucket filter before it. drizzle-graphql 16 builds broken SQL for a relation filter through `.through()` (`documents(where: { tags: … })`), so nothing uses one.
+  - The filters are `?bucket=<slug>&tags=<id>,<id>&match=all&q=<title text>&type=<bare content type>`. Tags go by id, so a rename keeps a link working. `match` is written only for `all`; a filter at "everything" leaves the URL.
+  - The type filter offers the types of the documents there are, by `typeLabel`. The title filter matches a substring of the title, ignoring case.
+  - Bulk tagging is one dialog with an Add and a Remove field, sent as one `bulkTagDocuments`. It makes no tags: that is the Tags page's or the document's picker's.
+  - The tag picker is on the document page, in its own card, and saves on every pick.
 
 ## MCP per bucket
 
@@ -297,6 +308,11 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
     - text-like types up to `MCP_DEFAULTS.inlineTextBytes` come back as text
     - images and PDFs up to `MCP_DEFAULTS.inlineBinaryBytes` come back as embedded resources
     - anything larger comes back as metadata only, with a note
+- **Decided in step 6:**
+  - Tags are named, not picked, on every tool, matched ignoring case. A name in `tags` or `add` the owner has no tag for is made; a name in `remove` no tag has is no matter. Names are checked before anything is stored.
+  - `list_tags` answers the tags on a document in this bucket and those on no document yet, with colour and count here. A tag used only in other buckets is left out, so its name does not leak another bucket's contents to this endpoint. Naming it in an upload still reuses it.
+  - Every document a tool answers carries `tags`: its tag names, sorted.
+  - `tag_document` is a write tool, idempotent, and answers the document with its tags. A name in both `add` and `remove` is refused.
 - **Write tools** (only when `mcp_writable` is on). These are what the goal runs on.
   - **Text path.** `upload_document({ filename, contentType, text, tags?, share? })`:
     - stores `text` as UTF-8, up to `MCP_DEFAULTS.inlineUploadBytes`
@@ -434,9 +450,9 @@ Each step is one or more Conventional Commits, and each ends green.
    - `/mcp/b/:slug`, access, the write tools (`upload_document`, `create_upload`, `complete_upload`, `create_share_link`), read tools, Settings → MCP.
    - The RustFS acceptance test.
    - Done when: Claude Code, connected to one bucket, writes a markdown file and a PDF, uploads both, and hands back working share links. It cannot see another bucket.
-6. **Tags.**
+6. **Tags.** *(Done.)*
    - The models, the mutations, `/tags`, the picker, list filters, bulk tagging, `tag_document`, and `tags` on the upload tools.
-   - Until this step, the upload tools take no `tags`.
+   - The acceptance test uploads with `tags` and lists by them.
 7. **Ship.**
    - Dockerfile, `docker-compose.dev.yml` (Postgres and RustFS; no CORS setting needed, `RUSTFS_OBS_LOG_DIRECTORY` emptied as in Engrafo), `docker-compose.quickstart.yml` (pulls `ghcr.io/cubicecho/s3-artifacts-mcp:latest`), CI (check, postgres, boot, the RustFS integration job), release to GHCR only.
    - README and AGENTS.md.
