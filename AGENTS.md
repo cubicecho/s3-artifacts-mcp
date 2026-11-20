@@ -14,9 +14,9 @@ needs. The agreed design is [`.agents/plan.md`](.agents/plan.md). Read it
 before adding a feature: it has the data model, the GraphQL surface, the MCP
 tools and the build order.
 
-**Where the build is:** step 2 of the plan (buckets). Sign-in, API keys,
-health, settings and buckets (Settings → Buckets) exist. Documents, share
-links, MCP and tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
+**Where the build is:** step 3 of the plan (documents). Sign-in, API keys,
+health, settings, buckets, and documents (upload, preview, rename, delete, the
+bucket tree) exist. Share links, MCP and tags do not yet. They are under [Planned](#planned--see-agentsplanmd) below.
 Don't write code or docs as if they exist.
 
 ## Skills to load
@@ -57,7 +57,7 @@ Packages: `@cubicecho/s3-artifacts-mcp-app`, `@cubicecho/s3-artifacts-mcp-server
 
 ## Project structure
 
-As of step 2. The folders later steps add are in the plan's "Layout".
+As of step 3. The folders later steps add are in the plan's "Layout".
 
 ```
 s3-artifacts-mcp/
@@ -70,27 +70,29 @@ s3-artifacts-mcp/
 │       │   ├── ui/          # cubeui primitives: vendored, not linted
 │       │   ├── *.tsx        # cubeui shells (PageLayout, CardLayout, SidebarLayout, LoadState, …)
 │       │   ├── layouts/     # app-layout (the sidebar shell around every signed-in page), require-auth
-│       │   └── domain/      # bucket-settings, bucket-form-dialog, bucket-test-report, sso-pairing, api-key-settings, create-api-key-dialog
-│       ├── routes/          # login, verify, sso, settings (Buckets, Auth, API keys, Appearance), documents (placeholder)
-│       ├── lib/             # apollo, auth, page, cn()
+│       │   └── domain/      # bucket-tree, bucket-sidebar, upload-panel, upload-dialog, document-preview-card, document-details-card,
+│       │                    #   rename-document-dialog, bucket-settings, bucket-form-dialog, bucket-secret-dialog, bucket-test-report, sso-pairing, api-key-settings
+│       ├── routes/          # login, verify, sso, settings (Buckets, Auth, API keys, Appearance), documents (/), document (/documents/:id)
+│       ├── lib/             # apollo, auth, library (the tree's and list's one query), upload, content-url, page, cn()
 │       └── main.tsx         # Providers + the router
 ├── server/                  # GraphQL API (port 3005)
 │   ├── __generated__/       # Generated SDL (not committed)
 │   └── src/
 │       ├── index.ts         # Boot only: preflight, wait for Postgres, migrate, createApp, listen, stop on a signal
 │       ├── core/            # config, defaults, wire, errors, validation, context, preflight, limiter, preload-env, secrets
-│       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs)
-│       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema
+│       ├── http/            # app (createApp), health, shutdown, static, sso (the two OIDC legs), content (/api routes)
+│       ├── graphql/         # handler, build-schema, schema, tenancy, write-schema, docs, parent-id
 │       ├── auth/            # better-auth (with the owner gate), auth-host, admin, rate-limit, resolvers
 │       ├── sso/             # Pairing an OIDC provider from a setup URL: settings, pairing (RFC 7591/7592), resolvers
 │       ├── api-keys/        # resolvers: list, make and revoke the caller's API keys
 │       ├── buckets/         # presets, input (validation, slugs), test (the connection probe), sdl, resolvers
 │       ├── storage/         # storage (the Storage interface), s3 (one bucket), registry (all of them)
+│       ├── documents/       # keys, create, upload (PUT stream in), download (GET stream out), content-url, sweep, sdl, resolvers
 │       └── __tests__/       # Server tests, in the same folders as src; helpers.ts at the root
 ├── db/
 │   ├── drizzle/             # Generated migrations (committed)
 │   └── src/
-│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets
+│       ├── models/          # auth (better-auth's tables), users, oidc-settings, buckets, documents
 │       ├── schema.ts        # Every model
 │       ├── relations.ts     # defineRelations config (drives the GraphQL schema)
 │       ├── defaults.ts      # DATABASE_DEFAULTS
@@ -351,6 +353,44 @@ no Cloudflare R2 preset. Rules that are easy to break:
   preselects instead (the bucket open in the tree, the only one, or the last
   used, remembered in the browser).
 
+**A document is `pending_upload` until its bytes are in the bucket.**
+`createDocumentUpload` makes the row; `PUT /api/documents/:id/content` streams
+the body through lib-storage, counting and hashing it, and only a body of
+exactly the declared size becomes `ready` (sha256 set, in one transaction
+guarded on `pending_upload`). Any other ending (short, long, storage failure,
+client gone) aborts the multipart upload and deletes the object and the row.
+The sweeper (`documents/sweep.ts`, started only in `index.ts`) drops pending
+rows idle past `UPLOAD_DEFAULTS.pendingTtlMinutes`. Lists show `ready` only.
+Object keys are `<uuid>-<ascii filename>` at the bucket's top level.
+
+**The content routes are same-origin and must stay safe as such.**
+`/api/documents/:id/content` is served from the app's own origin, so an
+uploaded file could otherwise run script as the app:
+
+- `PUT` takes only a session bearer header (no cookies, no API keys). `GET`
+  takes the bearer header or a `?t=` from `Document.contentUrl`, because
+  `<img>`, `<iframe>` and `<video>` cannot send headers. `t` is an HMAC over
+  id, object key, download flag and expiry (15 minutes), keyed by HKDF from
+  `BETTER_AUTH_SECRET`. Any bad, stale or foreign token is 404, never 401/403.
+- Every response has `nosniff`; everything but passive inline types (non-SVG
+  images, audio, video, PDF, plain text) gets `Content-Security-Policy:
+  sandbox`. Don't widen that list. The app never renders uploaded HTML.
+- No CORS headers on `/api`, ever.
+
+**A field added to a generated type needs `id` in the query.** drizzle-graphql
+adds the primary key only when a query names no column, so `Bucket.secretReadable`
+and `Document.contentUrl` read it through `parentIdOf` (`graphql/parent-id.ts`),
+which answers BAD_USER_INPUT, not NOT_FOUND, when it is missing. Use it for any
+new added field, and always select `id` in the app.
+
+**The bucket tree starts collapsed and stays the owner's.** `bucket-tree` passes
+`defaultOpen={[]}` to cubeui's `FileTree` (whose default is `"all"`). Nothing
+opens a bucket but a press: not a reload, an upload, or a document page. A
+bucket the owner opened stays open through a refetch. Expansion is not saved.
+Stories cover all three. The tree and the documents list share the `Library`
+query; anything that adds or removes a bucket or document refetches it
+(`LIBRARY_QUERIES`).
+
 **`app/src/components/ui/` is vendored** from the cubeui registry and kept as
 published, so `shadcn add` can update it. `biome.json` turns lint and format off
 there. The cubeui shells one level up are the same.
@@ -369,16 +409,6 @@ too.
 None of this exists yet. When you build a step, move its rules up into "Rules
 that carry weight" and the structure tree, and delete them here.
 
-- **Documents (step 3).** A document is created `pending_upload` before its
-  bytes exist. The app's uploads and downloads stream through the server
-  (`/api/documents/:id/content`), so the app needs no bucket CORS. Object keys
-  are `<objectId>-<sanitized filename>` at the bucket's top level. There are no
-  folders.
-- **The bucket tree (step 3).** Engrafo's archive tree becomes `bucket-tree`,
-  two levels (bucket → item), mounted on every signed-in page. **It starts
-  collapsed:** pass `defaultOpen={[]}` to cubeui's `FileTree`, whose default is
-  `"all"`. Nothing opens on its own, and expansion is not saved. A story covers
-  the collapsed first render.
 - **Share links (step 4).** Presigned GETs on the bucket's `public_endpoint`,
   stored encrypted. Expiry is capped at 7 days (SigV4's maximum). A single link
   cannot be revoked; `rekeyDocument` revokes them all. `app_settings` arrives

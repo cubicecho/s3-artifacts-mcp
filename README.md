@@ -9,18 +9,24 @@ small, self-hosted store in between. It keeps the documents' metadata in
 Postgres, the bytes in buckets you configure, and gives each bucket its own MCP
 endpoint.
 
-> **Status: early.** This is step 2 of [the plan](.agents/plan.md): sign-in,
-> API keys, settings and buckets. Everything marked *planned* below is
+> **Status: early.** This is step 3 of [the plan](.agents/plan.md): sign-in,
+> API keys, settings, buckets and documents. Everything marked *planned* below is
 > designed but not built yet.
 
 ## What it does
 
 - **Several buckets, on several accounts**: AWS S3, MinIO, RustFS and
   Backblaze B2 side by side, each with its own endpoint and keys, added and
-  tested in Settings. Any of them will receive uploads *(planned)*. There is
+  tested in Settings. Any of them can receive uploads. There is
   no default bucket: every upload says which bucket it goes to.
-- **Upload** *(planned)*: from the app (a batch of files, each with its own
-  progress bar) or from an agent over MCP.
+- **Upload**: from the app, a batch of files (a dropped folder uploads flat),
+  each with its own progress bar, up to 100 MiB each for now. From an agent
+  over MCP *(planned)*.
+- **Preview**: PDFs, images, audio, video, text and Markdown open on the
+  document's page, which also renames, downloads and deletes it. Uploaded HTML
+  is never shown in the app, only downloaded.
+- **A tree of buckets** in the sidebar, each with its documents beneath, every
+  bucket shut until you open it.
 - **Share links** *(planned)*: a link with a permission (view or download) and
   an expiry, signed for the bucket itself. See [Share links](#share-links).
 - **Tags** *(planned)*: yours, to sort and filter documents. There are no
