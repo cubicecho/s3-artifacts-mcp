@@ -345,8 +345,11 @@ no Cloudflare R2 preset. Rules that are easy to break:
   behind.
 - **Slugs are unique across the instance**, because they name the MCP endpoint.
   A taken slug is `CONFLICT`, including when two saves race for it.
-- There is always a default while any bucket exists: the first is made the
-  default, and deleting the default promotes the oldest remaining one.
+- **There is no default bucket.** Every upload names its bucket: an MCP
+  client by its endpoint (`/mcp/b/:slug`), the app by the bucket the owner
+  picks. Don't add one back to save the app a choice; the upload panel
+  preselects instead (the bucket open in the tree, the only one, or the last
+  used, remembered in the browser).
 
 **`app/src/components/ui/` is vendored** from the cubeui registry and kept as
 published, so `shadcn add` can update it. `biome.json` turns lint and format off

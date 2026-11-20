@@ -5,7 +5,6 @@ import { graphql } from '@/__generated__';
 import type { BucketSettingsQuery } from '@/__generated__/graphql';
 import { CardLayout } from '@/components/card-layout';
 import { ConfirmButton } from '@/components/confirm-button';
-import { Star } from '@/components/domain/app-icons';
 import { BucketFormDialog, type EditableBucket } from '@/components/domain/bucket-form-dialog';
 import { BucketSecretDialog } from '@/components/domain/bucket-secret-dialog';
 import { type BucketTestOutcome, BucketTestReport } from '@/components/domain/bucket-test-report';
@@ -37,7 +36,6 @@ const BucketList = graphql(`
       bucket
       accessKeyId
       forcePathStyle
-      isDefault
       secretReadable
     }
     bucketPresets {
@@ -64,15 +62,6 @@ const TestSavedBucket = graphql(`
         errorCode
         message
       }
-    }
-  }
-`);
-
-const SetDefaultBucket = graphql(`
-  mutation SetDefaultBucket($id: UUID!) {
-    setDefaultBucket(id: $id) {
-      id
-      isDefault
     }
   }
 `);
@@ -122,13 +111,13 @@ function whereOf(bucket: Pick<BucketRow, 'endpoint' | 'region'>): string {
 }
 
 /**
- * Default first, then by name, so the list reads the same however the server orders it.
+ * By name, so the list reads the same however the server orders it.
  *
  * @param buckets - The buckets.
  * @returns A sorted copy.
  */
 function sorted(buckets: readonly BucketRow[]): BucketRow[] {
-  return [...buckets].sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.name.localeCompare(b.name));
+  return [...buckets].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -143,21 +132,19 @@ function isInUse(error: unknown): boolean {
 
 /**
  * Settings' Buckets card: where documents are stored. Each bucket is on its own provider and
- * account, so a row says which, and where. A bucket can be tested, made the default, edited and
- * removed; a secret that can no longer be read says so and asks for it again.
+ * account, so a row says which, and where. A bucket can be tested, edited and removed;
+ * a secret that can no longer be read says so and asks for it again.
  *
  * @returns The card, and the add/edit dialog or the remove question while one is open.
  */
 export function BucketSettings() {
   const result = useQuery(BucketList);
   const [testBucket] = useMutation(TestSavedBucket);
-  const [setDefaultBucket] = useMutation(SetDefaultBucket);
   const [deleteBucket] = useMutation(DeleteBucket);
   const [editing, setEditing] = useState<EditableBucket | 'new' | null>(null);
   const [removing, setRemoving] = useState<BucketRow | null>(null);
   const [rekeying, setRekeying] = useState<BucketRow | null>(null);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
-  const [failure, setFailure] = useState<string | undefined>();
   const [tests, setTests] = useState<Record<string, TestState>>({});
   const buckets = sorted(result.data?.buckets ?? []);
   const presets = result.data?.bucketPresets ?? [];
@@ -192,16 +179,6 @@ export function BucketSettings() {
     setTests((all) => ({ ...all, [bucket.id]: next }));
   }
 
-  async function makeDefault(bucket: BucketRow) {
-    setFailure(undefined);
-    try {
-      await setDefaultBucket({ variables: { id: bucket.id } });
-      await result.refetch();
-    } catch (error) {
-      setFailure(messageOf(error) ?? 'The server refused it');
-    }
-  }
-
   async function remove(bucket: BucketRow, forgetDocuments: boolean) {
     setRemoving(null);
     setRefusal(null);
@@ -222,11 +199,10 @@ export function BucketSettings() {
       <CardLayout
         level={2}
         title="Buckets"
-        description="Where documents are stored. Each bucket has its own provider, account and keys; uploads go to the default unless another is chosen."
+        description="Where documents are stored. Each bucket has its own provider, account and keys."
         actionSlot={buckets.length > 0 ? addButton : undefined}
         contentSlot={
           <div className="grid gap-4">
-            {failure && <Alert variant="destructive" title="Could not change the default" description={failure} />}
             {refusal && (
               <Alert
                 variant="destructive"
@@ -270,7 +246,6 @@ export function BucketSettings() {
                     providerLabel={providerOf(bucket)}
                     test={tests[bucket.id]}
                     onTest={() => void test(bucket)}
-                    onMakeDefault={() => void makeDefault(bucket)}
                     onEdit={() => setEditing(bucket)}
                     onReenterSecret={() => setRekeying(bucket)}
                     onRemove={() => setRemoving(bucket)}
@@ -321,7 +296,6 @@ interface BucketListRowProps {
   /** Its last test, if one was run here. */
   test: TestState | undefined;
   onTest: () => void;
-  onMakeDefault: () => void;
   onEdit: () => void;
   /** Opens the secret-only dialog, for a bucket whose stored secret no longer opens. */
   onReenterSecret: () => void;
@@ -329,22 +303,13 @@ interface BucketListRowProps {
 }
 
 /**
- * One bucket in the list: its name, whether it is the default, which provider and where, and its
+ * One bucket in the list: its name, which provider and where, and its
  * actions. A test's report opens under the row.
  *
  * @param props - The bucket, its last test, and what each action calls.
  * @returns The row.
  */
-function BucketListRow({
-  bucket,
-  providerLabel,
-  test,
-  onTest,
-  onMakeDefault,
-  onEdit,
-  onReenterSecret,
-  onRemove,
-}: BucketListRowProps) {
+function BucketListRow({ bucket, providerLabel, test, onTest, onEdit, onReenterSecret, onRemove }: BucketListRowProps) {
   const isUnreadable = bucket.secretReadable === false;
 
   return (
@@ -353,7 +318,6 @@ function BucketListRow({
         title={
           <ItemTitle className="min-w-0 flex-wrap">
             <span className="truncate">{bucket.name}</span>
-            {bucket.isDefault && <Badge variant="info-soft">Default</Badge>}
             {isUnreadable && <Badge variant="warning-soft">Secret unreadable</Badge>}
           </ItemTitle>
         }
@@ -395,12 +359,6 @@ function BucketListRow({
                 />
               </MenuTrigger>
               <MenuContent align="end">
-                <MenuItem
-                  iconSlot={<Star />}
-                  label="Make default"
-                  disabled={bucket.isDefault}
-                  onSelect={onMakeDefault}
-                />
                 <MenuItem iconSlot={<Pencil />} label="Edit" onSelect={onEdit} />
                 <MenuSeparator />
                 <MenuItem iconSlot={<Trash2 />} label="Remove" destructive onSelect={onRemove} />

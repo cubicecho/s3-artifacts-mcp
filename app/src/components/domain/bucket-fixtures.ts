@@ -58,7 +58,6 @@ export interface BucketFixture {
   bucket: string;
   accessKeyId: string;
   forcePathStyle: boolean;
-  isDefault: boolean;
   mcpEnabled: boolean;
   mcpWritable: boolean;
   secretReadable: boolean;
@@ -68,7 +67,7 @@ export interface BucketFixture {
 
 const CREATED = '2026-11-01T09:00:00.000Z';
 
-/** The default: a MinIO on the home network. */
+/** A MinIO on the home network. */
 export const MINIO_BUCKET: BucketFixture = {
   id: '0b6f1c2a-3d4e-4f50-8a61-7b8c9d0e1f20',
   slug: 'artifacts',
@@ -80,7 +79,6 @@ export const MINIO_BUCKET: BucketFixture = {
   bucket: 'artifacts',
   accessKeyId: 'minio-owner',
   forcePathStyle: true,
-  isDefault: true,
   mcpEnabled: false,
   mcpWritable: false,
   secretReadable: true,
@@ -101,7 +99,6 @@ export const S3_BUCKET: BucketFixture = {
   bucket: 'acme-reports',
   accessKeyId: 'AKIAIOSFODNN7EXAMPLE',
   forcePathStyle: false,
-  isDefault: false,
 };
 
 /** Backblaze B2, a second account. */
@@ -117,7 +114,6 @@ export const B2_BUCKET: BucketFixture = {
   bucket: 'acme-backups',
   accessKeyId: '004a1b2c3d4e5f60000000001',
   forcePathStyle: false,
-  isDefault: false,
 };
 
 /** RustFS, on the same network as the MinIO. */
@@ -131,10 +127,9 @@ export const RUSTFS_BUCKET: BucketFixture = {
   publicEndpoint: null,
   bucket: 'scratch',
   accessKeyId: 'rustfs-owner',
-  isDefault: false,
 };
 
-/** One of each provider, the MinIO the default, in no particular order. */
+/** One of each provider, in no particular order. */
 export const MIXED_BUCKETS: readonly BucketFixture[] = [S3_BUCKET, B2_BUCKET, MINIO_BUCKET, RUSTFS_BUCKET];
 
 /** Every step of a test, as `testBucket` answers them. */
@@ -236,7 +231,6 @@ export function bucketServer(start: readonly BucketFixture[], options: BucketSer
           publicEndpoint: input.publicEndpoint ?? null,
           region: input.region ?? 'us-east-1',
           forcePathStyle: input.forcePathStyle ?? false,
-          isDefault: buckets.length === 0,
         };
         buckets.push(made);
         return made;
@@ -258,12 +252,6 @@ export function bucketServer(start: readonly BucketFixture[], options: BucketSer
         }
         bucket.secretReadable = true;
         return bucket;
-      },
-      setDefaultBucket: (_parent: unknown, args: { id: string }) => {
-        for (const bucket of buckets) {
-          bucket.isDefault = bucket.id === args.id;
-        }
-        return buckets.find((bucket) => bucket.id === args.id);
       },
       deleteBucket: (_parent: unknown, args: { id: string; forgetDocuments?: boolean | null }) => {
         const isRefused = options.hasDocuments === true && args.forgetDocuments !== true;

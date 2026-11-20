@@ -14,7 +14,7 @@ import { BucketSettings } from './bucket-settings';
 
 /**
  * Settings' Buckets card against a mock server built from the real SDL. The mutations change
- * the server's list, so a story sees the default move and a bucket leave.
+ * the server's list, so a story sees a bucket arrive and leave.
  */
 
 const meta = {
@@ -74,17 +74,18 @@ export const Failed: Story = {
 };
 
 /**
- * One of each provider on different accounts. The default comes first and is marked; every row
- * names its provider and where it is, so buckets of the same kind can be told apart.
+ * One of each provider on different accounts, sorted by name. Every row names its provider and
+ * where it is, so buckets of the same kind can be told apart.
  */
 export const Filled: Story = {
   play: async ({ canvas, canvasElement }) => {
     const listed = await rows(canvasElement);
     await expect(listed).toHaveLength(MIXED_BUCKETS.length);
-    const [first] = listed;
+    const [first, second] = listed;
     await expect(first).toHaveTextContent('Artifacts');
-    await expect(within(first).getByText('Default')).toBeVisible();
-    await expect(canvas.getAllByText('Default')).toHaveLength(1);
+    await expect(second).toHaveTextContent('Backups');
+    // There is no default bucket: an upload always names where it goes.
+    await expect(canvas.queryByText('Default')).not.toBeInTheDocument();
 
     await expect(canvas.getByText('MinIO · minio.lan:9000 · artifacts')).toBeInTheDocument();
     // AWS on its regional default has no endpoint, so the row names the region instead.
@@ -172,22 +173,6 @@ export const TestWarns: Story = {
     await expect(report.getByText('Works, but share links may not open')).toBeInTheDocument();
     await expect(report.getByText('Warning')).toBeInTheDocument();
     await expect(report.queryByText('Failed')).not.toBeInTheDocument();
-  },
-};
-
-/** Making another bucket the default moves the mark, and the new default comes first. */
-export const MakesDefault: Story = {
-  parameters: { apolloClient: { resolvers: bucketServer(MIXED_BUCKETS).resolvers } },
-  play: async ({ canvas, canvasElement }) => {
-    const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(await canvas.findByRole('button', { name: 'More for Reports' }));
-    await userEvent.click(await page.findByRole('menuitem', { name: 'Make default' }));
-    await waitFor(async () => {
-      const [first] = await rows(canvasElement);
-      await expect(first).toHaveTextContent('Reports');
-      await expect(within(first).getByText('Default')).toBeVisible();
-    });
-    await expect(canvas.getAllByText('Default')).toHaveLength(1);
   },
 };
 

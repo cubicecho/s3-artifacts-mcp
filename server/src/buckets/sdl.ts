@@ -142,21 +142,18 @@ export const BUCKETS_SDL = parse(`
     testBucket(input: BucketInput!, id: UUID): BucketTestResult!
     """
     Adds a bucket after testing it. BAD_USER_INPUT, with \`extensions.step\` and \`extensions.errorCode\`, when a
-    step other than SHARE_LINK fails; CONFLICT when the slug is taken. The first bucket becomes the default.
+    step other than SHARE_LINK fails; CONFLICT when the slug is taken.
     """
     createBucket(input: BucketInput!): Bucket!
     "Changes a bucket's settings, retesting it when the connection changes. Refused as createBucket is."
     updateBucket(id: UUID!, input: BucketUpdateInput!): Bucket!
     "Replaces a bucket's stored secret, as after \`BETTER_AUTH_SECRET\` changed, and retests the bucket with it."
     setBucketSecret(id: UUID!, secretAccessKey: String!): Bucket!
-    "Makes a bucket the default, the one an upload goes to when it names none. The previous default stops being it."
-    setDefaultBucket(id: UUID!): Bucket!
     "Whether MCP clients may reach the bucket, and whether they may write to it. Writable needs enabled."
     setBucketMcp(id: UUID!, enabled: Boolean!, writable: Boolean!): Bucket!
     """
     Removes a bucket from the instance. The objects in it are left alone. Refused while documents point at it,
-    unless \`forgetDocuments\` is true, which deletes those documents' rows (not their objects). When the default
-    is removed, the oldest remaining bucket becomes the default.
+    unless \`forgetDocuments\` is true, which deletes those documents' rows (not their objects).
     """
     deleteBucket(id: UUID!, forgetDocuments: Boolean = false): Boolean!
   }

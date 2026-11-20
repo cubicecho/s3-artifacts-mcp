@@ -1,6 +1,6 @@
 import { type Bucket, buckets } from '@cubicecho/s3-artifacts-mcp-db/schema';
 import { resolveSelection, singularizeMapper } from '@vantreeseba/drizzle-graphql';
-import { and, asc, count, eq, ne } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import { assertObjectType, extendSchema, type GraphQLResolveInfo, type GraphQLSchema } from 'graphql';
 import { z } from 'zod';
 import type { Context } from '../core/context.ts';
@@ -307,20 +307,11 @@ export function applyBucketsExtension(schema: GraphQLSchema): GraphQLSchema {
     requirePassed(await testConnection(context, fields, secret));
 
     const id = await withSlugGuard(fields.slug, () =>
-      context.db.transaction(async (tx) => {
-        const [{ existing }] = await tx.select({ existing: count() }).from(buckets).where(eq(buckets.userId, userId));
-        const [row] = await tx
-          .insert(buckets)
-          .values({
-            ...fields,
-            userId,
-            secretAccessKeyEnc: context.secrets.seal(secret, SecretPurpose.BucketSecret),
-            // The first bucket is where uploads go until the owner picks another.
-            isDefault: existing === 0,
-          })
-          .returning({ id: buckets.id });
-        return row.id;
-      }),
+      context.db
+        .insert(buckets)
+        .values({ ...fields, userId, secretAccessKeyEnc: context.secrets.seal(secret, SecretPurpose.BucketSecret) })
+        .returning({ id: buckets.id })
+        .then(([row]) => row.id),
     );
     context.storage.invalidate(id);
     return selectBucket(context, info, id);
@@ -373,25 +364,6 @@ export function applyBucketsExtension(schema: GraphQLSchema): GraphQLSchema {
     return selectBucket(context, info, row.id);
   };
 
-  mutations.setDefaultBucket.resolve = async (
-    _parent: unknown,
-    args: { id: string },
-    context: Context,
-    info: GraphQLResolveInfo,
-  ) => {
-    const row = await ownBucket(context, args.id);
-    // Cleared first, in the same transaction: the partial unique index allows one default at a time.
-    await context.db.transaction(async (tx) => {
-      await tx
-        .update(buckets)
-        .set({ isDefault: false })
-        .where(and(eq(buckets.userId, row.userId), eq(buckets.isDefault, true), ne(buckets.id, row.id)));
-      await tx.update(buckets).set({ isDefault: true }).where(eq(buckets.id, row.id));
-    });
-    context.storage.invalidate(row.id);
-    return selectBucket(context, info, row.id);
-  };
-
   mutations.setBucketMcp.resolve = async (
     _parent: unknown,
     args: { id: string; enabled: boolean; writable: boolean },
@@ -419,22 +391,7 @@ export function applyBucketsExtension(schema: GraphQLSchema): GraphQLSchema {
     const row = await ownBucket(context, args.id);
     // There are no documents yet. When they arrive, a bucket they point at is refused here unless
     // `forgetDocuments` is true, which deletes their rows and leaves the objects in place.
-    await context.db.transaction(async (tx) => {
-      await tx.delete(buckets).where(and(eq(buckets.id, row.id), eq(buckets.userId, row.userId)));
-      if (row.isDefault === false) {
-        return;
-      }
-      // Uploads that name no bucket need somewhere to go while any bucket is left: the oldest.
-      const [next] = await tx
-        .select({ id: buckets.id })
-        .from(buckets)
-        .where(eq(buckets.userId, row.userId))
-        .orderBy(asc(buckets.createdAt), asc(buckets.id))
-        .limit(1);
-      if (next !== undefined) {
-        await tx.update(buckets).set({ isDefault: true }).where(eq(buckets.id, next.id));
-      }
-    });
+    await context.db.delete(buckets).where(and(eq(buckets.id, row.id), eq(buckets.userId, row.userId)));
     context.storage.invalidate(row.id);
     return true;
   };

@@ -17,8 +17,8 @@ endpoint.
 
 - **Several buckets, on several accounts**: AWS S3, MinIO, RustFS and
   Backblaze B2 side by side, each with its own endpoint and keys, added and
-  tested in Settings. Any of them will receive uploads *(planned)*, and one is
-  the default.
+  tested in Settings. Any of them will receive uploads *(planned)*. There is
+  no default bucket: every upload says which bucket it goes to.
 - **Upload** *(planned)*: from the app (a batch of files, each with its own
   progress bar) or from an agent over MCP.
 - **Share links** *(planned)*: a link with a permission (view or download) and

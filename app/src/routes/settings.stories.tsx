@@ -134,13 +134,12 @@ export const Auth: Story = {
   },
 };
 
-/** Buckets on several providers and accounts, the default marked and first. */
+/** Buckets on several providers and accounts. */
 export const Buckets: Story = {
   parameters: { apolloClient: { resolvers: withBuckets(MIXED_BUCKETS) } },
   play: async ({ canvas }) => {
     const list = within(await canvas.findByRole('list', { name: 'Buckets' }));
     await expect(list.getAllByRole('listitem')).toHaveLength(MIXED_BUCKETS.length);
-    await expect(list.getByText('Default')).toBeVisible();
     await expect(list.getByText('AWS S3 · eu-west-1 · acme-reports')).toBeInTheDocument();
   },
 };
@@ -160,7 +159,6 @@ export const AddsABucket: Story = {
     await userEvent.click(dialog.getByRole('button', { name: 'Add bucket' }));
     await waitFor(() => expect(page.queryByRole('dialog')).not.toBeInTheDocument());
     await expect(await canvas.findByText('Reports')).toBeInTheDocument();
-    await expect(canvas.getByText('Default')).toBeVisible();
   },
 };
 

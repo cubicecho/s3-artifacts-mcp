@@ -44,7 +44,7 @@ anyone can sign in (see "Environment").
 |---|---|---|
 | D1 | **One owner.** The first account to sign in owns the instance; every other address is refused. | Rows still carry `user_id`, so multi-user later is additive (see "Later"). |
 | D2 | **Engrafo's app layout** (`app/ server/ db/` workspaces), not the single-operator layout. | A deliberate departure from `cubicecho_backend`'s archetype test: v1 has one user, but the repo should not need restructuring when it grows a second. Postgres like Engrafo, PGlite in tests only. |
-| D3 | **Buckets are managed by the owner in Settings**; any bucket can receive uploads. | |
+| D3 | **Buckets are managed by the owner in Settings**; any bucket can receive uploads. **There is no default bucket:** every upload names its bucket. | MCP is per bucket, so an agent's bucket is its endpoint. In the app the upload panel preselects the bucket open in the tree, else the only one, else the last used (kept in the browser). |
 | D4 | **The app's own uploads and downloads stream through the server.** | No bucket CORS is needed for the app, and every backend behaves the same. The server carries the traffic. |
 | D5 | **Share links are presigned URLs on the bucket itself**, not links to the app. | The browser fetches straight from the bucket, so the app is not in the path. Consequences in "Share links". |
 | D6 | **Only files uploaded through the app are documents.** Existing objects in a bucket are ignored. | A "Scan bucket" import is listed under "Later". |
@@ -174,7 +174,6 @@ tenancy test enforces it).
 - `region`, `bucket`
 - `access_key_id`, `secret_access_key_enc`
 - `force_path_style`
-- `is_default`: at most one, enforced by a partial unique index
 - `mcp_enabled`, `mcp_writable`
 - `created_at`, `updated_at`
 
@@ -229,9 +228,9 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 
 ## Uploads and in-app downloads (D4)
 
-1. **Start.** `createDocumentUpload(bucketId?, filename, contentType, size, tagIds?)`:
+1. **Start.** `createDocumentUpload(bucketId, filename, contentType, size, tagIds?)`:
    - refuses above `max_upload_bytes`
-   - inserts a `pending_upload` row (default bucket when none is given)
+   - inserts a `pending_upload` row in that bucket
    - returns `{ document, uploadPath: /api/documents/:id/content }`
 2. **Send.** `PUT /api/documents/:id/content` (session only):
    - streams the body to S3 with `lib-storage` `Upload`, hashing SHA-256 as it passes
@@ -336,7 +335,7 @@ Better-auth's tables (users, sessions, verification, apikeys) as Engrafo.
 
 | Section | Contents |
 |---|---|
-| Buckets | List with the default marked; add/edit dialog (preset, endpoint, public endpoint, region, bucket, access key, secret which can be replaced but not read, path-style); Test; set default; remove/forget |
+| Buckets | List; add/edit dialog (preset, endpoint, public endpoint, region, bucket, access key, secret which can be replaced but not read, path-style); Test; re-enter secret; remove/forget |
 | Share links | All links, with filters, copy, remove from list |
 | MCP | Per-bucket switches and URLs, the client snippet |
 | API keys | Create (shown once), list with last used, revoke |
@@ -352,7 +351,7 @@ Generated reads for `buckets` (secret column excluded), `documents`, `tags`,
 by `user_id`. Every generated write is off, as in Engrafo. The hand-written
 mutations:
 
-- **Buckets:** `testBucket`, `createBucket`, `updateBucket`, `setBucketSecret`, `setDefaultBucket`, `setBucketMcp(enabled, writable)`, `deleteBucket(forgetDocuments)`
+- **Buckets:** `testBucket`, `createBucket`, `updateBucket`, `setBucketSecret`, `setBucketMcp(enabled, writable)`, `deleteBucket(forgetDocuments)`
 - **Documents:** `createDocumentUpload`, `renameDocument`, `deleteDocument` (row and object), `rekeyDocument`
 - **Tags:** `createTag`, `updateTag`, `deleteTag`, `setDocumentTags`, `bulkTagDocuments`
 - **Share links:** `createShareLink`, `deleteShareLink`, and `ShareLink.url` as a resolved field that decrypts for the owner's session
@@ -408,7 +407,7 @@ Each step is one or more Conventional Commits, and each ends green.
    - Done when: sign-in (magic link and OIDC pairing) works, `/healthz` answers, Settings shows Sign-in and API keys.
 2. **Buckets.**
    - `core/secrets.ts`, the `buckets` model, `storage/` (interface, s3, registry), presets, `testBucket`, the bucket mutations, Settings → Buckets.
-   - Done when: a RustFS bucket and an AWS-style bucket can be added, tested, defaulted and removed.
+   - Done when: a RustFS bucket and an AWS-style bucket can be added, tested, edited and removed.
 3. **Documents.**
    - The `documents` model, the upload start mutation, the stream-in and stream-out routes, the sweeper, the documents list, the document page with preview, rename and delete.
    - Done when: a batch of mixed files uploads with per-file progress into a chosen bucket and previews, and shows in the sidebar tree under that bucket. A dropped folder uploads its files flat.

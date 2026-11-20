@@ -22,7 +22,6 @@ const COLUMN_DOCS: Readonly<Record<string, Readonly<Record<string, string>>>> = 
     bucket: 'The bucket’s name at the provider.',
     accessKeyId: 'The access key the server signs with. Its secret is stored encrypted and never returned.',
     forcePathStyle: 'Whether the bucket is addressed in the path (`host/bucket/key`) rather than the host.',
-    isDefault: 'Whether uploads that name no bucket go here. At most one bucket is the default.',
     mcpEnabled: 'Whether MCP clients may reach the bucket at its endpoint.',
     mcpWritable: 'Whether MCP clients may upload to the bucket and share from it, not only read.',
   }),

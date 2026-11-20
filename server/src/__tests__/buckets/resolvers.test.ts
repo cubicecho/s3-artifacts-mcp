@@ -18,7 +18,7 @@ import {
 } from '../helpers.ts';
 import { createMemoryBackend, type MemoryBackend } from '../memory-storage.ts';
 
-const FIELDS = `id slug name provider endpoint publicEndpoint region bucket accessKeyId forcePathStyle isDefault mcpEnabled mcpWritable secretReadable`;
+const FIELDS = `id slug name provider endpoint publicEndpoint region bucket accessKeyId forcePathStyle mcpEnabled mcpWritable secretReadable`;
 const CREATE = `mutation ($input: BucketInput!) { createBucket(input: $input) { ${FIELDS} } }`;
 const UPDATE = `mutation ($id: UUID!, $input: BucketUpdateInput!) { updateBucket(id: $id, input: $input) { ${FIELDS} } }`;
 const TEST = `
@@ -27,14 +27,13 @@ const TEST = `
   }
 `;
 const SET_SECRET = `mutation ($id: UUID!, $secret: String!) { setBucketSecret(id: $id, secretAccessKey: $secret) { ${FIELDS} } }`;
-const SET_DEFAULT = 'mutation ($id: UUID!) { setDefaultBucket(id: $id) { id isDefault } }';
 const SET_MCP = `
   mutation ($id: UUID!, $enabled: Boolean!, $writable: Boolean!) {
     setBucketMcp(id: $id, enabled: $enabled, writable: $writable) { id mcpEnabled mcpWritable }
   }
 `;
 const DELETE = 'mutation ($id: UUID!) { deleteBucket(id: $id) }';
-const LIST = '{ buckets(orderBy: { createdAt: { direction: asc, priority: 1 } }) { id slug isDefault } }';
+const LIST = '{ buckets(orderBy: { createdAt: { direction: asc, priority: 1 } }) { id slug } }';
 const PRESETS =
   '{ bucketPresets { provider label forcePathStyle defaultRegion endpointRequired regionRequired endpointExample } }';
 
@@ -117,7 +116,7 @@ describe('bucket resolvers', () => {
     );
   });
 
-  it('creates the first bucket as the default, filled in from its preset, with its secret sealed', async () => {
+  it('creates a bucket filled in from its preset, with its secret sealed', async () => {
     const bucket = await create();
     expect(bucket).toMatchObject({
       slug: 'dev-artifacts',
@@ -126,7 +125,6 @@ describe('bucket resolvers', () => {
       publicEndpoint: null,
       region: 'us-east-1',
       forcePathStyle: true,
-      isDefault: true,
       mcpEnabled: false,
       mcpWritable: false,
       secretReadable: true,
@@ -136,12 +134,6 @@ describe('bucket resolvers', () => {
     expect(row.secretAccessKeyEnc).not.toContain(SECRET);
     expect(secrets.open(row.secretAccessKeyEnc, SecretPurpose.BucketSecret)).toBe(SECRET);
     expect(invalidated).toContain(bucket.id);
-  });
-
-  it('makes a second bucket that is not the default', async () => {
-    await create();
-    const second = await create({ name: 'Second', bucket: 'second' });
-    expect(second.isDefault).toBe(false);
   });
 
   it('keeps buckets on different providers and accounts side by side', async () => {
@@ -338,22 +330,6 @@ describe('bucket resolvers', () => {
     expect((await client().expectOk('{ buckets { secretReadable } }')).buckets).toEqual([{ secretReadable: true }]);
   });
 
-  it('moves the default with setDefaultBucket', async () => {
-    const first = await create();
-    const second = await create({ name: 'Second', bucket: 'second' });
-    expect((await client().expectOk(SET_DEFAULT, { id: second.id })).setDefaultBucket).toEqual({
-      id: second.id,
-      isDefault: true,
-    });
-    const { buckets: listed } = await client().expectOk(LIST);
-    expect(listed.map((bucket: { id: string; isDefault: boolean }) => [bucket.id, bucket.isDefault])).toEqual([
-      [first.id, false],
-      [second.id, true],
-    ]);
-    // Setting the default again is a no-op, not a unique violation.
-    expect((await client().expectOk(SET_DEFAULT, { id: second.id })).setDefaultBucket.isDefault).toBe(true);
-  });
-
   it('switches MCP on and writable, and refuses writable while off', async () => {
     const bucket = await create();
     const { setBucketMcp } = await client().expectOk(SET_MCP, { id: bucket.id, enabled: true, writable: true });
@@ -362,18 +338,18 @@ describe('bucket resolvers', () => {
     expect(refused.code).toBe(ErrorCode.BadUserInput);
   });
 
-  it('deletes a bucket, promoting the oldest remaining one when it was the default', async () => {
+  it('deletes a bucket and leaves the others', async () => {
     const first = await create();
     const second = await create({ name: 'Second', bucket: 'second' });
     const third = await create({ name: 'Third', bucket: 'third' });
     expect((await client().expectOk(DELETE, { id: first.id })).deleteBucket).toBe(true);
     const { buckets: listed } = await client().expectOk(LIST);
     expect(listed).toEqual([
-      { id: second.id, slug: 'second', isDefault: true },
-      { id: third.id, slug: 'third', isDefault: false },
+      { id: second.id, slug: 'second' },
+      { id: third.id, slug: 'third' },
     ]);
     await client().expectOk(DELETE, { id: third.id });
-    expect((await client().expectOk(LIST)).buckets).toEqual([{ id: second.id, slug: 'second', isDefault: true }]);
+    expect((await client().expectOk(LIST)).buckets).toEqual([{ id: second.id, slug: 'second' }]);
     await client().expectOk(DELETE, { id: second.id });
     expect((await client().expectOk(LIST)).buckets).toEqual([]);
     expect(invalidated).toEqual(expect.arrayContaining([first.id, second.id, third.id]));
@@ -395,7 +371,6 @@ describe('bucket resolvers', () => {
     it.each([
       ['updateBucket', UPDATE, { input: { name: 'Mine now' } }],
       ['setBucketSecret', SET_SECRET, { secret: 'x' }],
-      ['setDefaultBucket', SET_DEFAULT, {}],
       ['setBucketMcp', SET_MCP, { enabled: true, writable: false }],
       ['deleteBucket', DELETE, {}],
     ])('%s answers NOT_FOUND', async (_name, mutation, variables) => {

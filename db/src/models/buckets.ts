@@ -1,4 +1,3 @@
-import { sql } from 'drizzle-orm';
 import { boolean, index, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { users } from './users.ts';
 
@@ -35,7 +34,6 @@ export const buckets = pgTable(
     accessKeyId: text('access_key_id').notNull(),
     secretAccessKeyEnc: text('secret_access_key_enc').notNull(),
     forcePathStyle: boolean('force_path_style').notNull().default(false),
-    isDefault: boolean('is_default').notNull().default(false),
     mcpEnabled: boolean('mcp_enabled').notNull().default(false),
     mcpWritable: boolean('mcp_writable').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -44,12 +42,7 @@ export const buckets = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (table) => [
-    uniqueIndex('uq_buckets_slug').on(table.slug),
-    // At most one default per owner: the bucket an upload goes to when it names none.
-    uniqueIndex('uq_buckets_default').on(table.userId).where(sql`${table.isDefault}`),
-    index('idx_buckets_user_id').on(table.userId),
-  ],
+  (table) => [uniqueIndex('uq_buckets_slug').on(table.slug), index('idx_buckets_user_id').on(table.userId)],
 );
 
 /** A bucket row as read, sealed secret included. */
